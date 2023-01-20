@@ -1,0 +1,91 @@
+default:
+  - _self_
+  - dset: VoiceBankDEMAND
+
+dummy:
+misc:
+  num_workers: 1
+  num_prints: 4
+  show: False
+  verbose: False
+
+optim:
+  load: False
+  # optim: 'sgd'
+  optim: 'adam'
+  lr: 0.0003
+  beta1: 0.9
+  beta2: 0.999
+  loss: 'l1'
+  # loss: 'mse'
+  # loss: 'psa'
+  # loss: 'psa-bose'
+  # loss: 'ideal-mag'
+  clip_grad: False
+
+model:
+  # wav-unet, dcunet, mel-rnn, 
+  # [TODO] Test crn, demucs, conv-tasnet, ddcrn
+  name: 'mel-rnn'
+  input_channels: 1
+  segment: 1.024
+  sample_rate: 16000
+  n_fft: 512
+  hop_length: 256
+  win_length: 512
+  center: True
+  # Mel-RNN
+  rnn_type: 'rnn'
+  rnn_layer: 256
+  n_mels: 128
+  f_min: 125
+  f_max: 8000
+  ema: True
+  # DCUnet
+  model_complexity: 45
+  model_depth: 10 
+  data_type: False 
+  padding_mode: 'zeros'
+  # Unet
+  unet_nlayers: 24
+  channels_interval: 12
+
+    
+dset:
+  wav: './test/data/TestVoiceBankDEMAND/DS_10283_2791'
+  split: 0.7
+  segment: 1.024  
+  use_all: True
+  shift: None
+  sample_rate: 16000
+  normalize: 'z-score'
+  # normalize: 'linear-scale'
+  fft: False
+  n_fft: 512
+  win_length: 512
+  hop_length: 256
+  n_mels: 128
+  channels: 1
+  
+solver:
+  root: './test'
+  epochs: 4
+  batch_size: 7
+  total_steps: 20
+  save_checkpoint_interval: 4
+  resume:
+  preloaded_model:
+  cudnn_deterministic: False
+  validation:
+    interval: 4
+    num_show: 10
+    metric: 'loss' # loss, stoi, pesq, sisdr
+    
+test:
+  num_workers: 10
+  every: 1
+  best: False
+  save: True
+  
+name: "test"
+seed: 10
