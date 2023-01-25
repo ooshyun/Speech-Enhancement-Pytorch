@@ -1,4 +1,4 @@
-
+import random
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
@@ -17,7 +17,8 @@ def main(path_config):
     config = load_yaml(path_config)
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
-
+    random.seed(config.seed)
+    
     train_dataset, validation_dataset = get_train_wav_dataset(config.dset)
 
     train_dataloader = DataLoader(dataset=train_dataset,

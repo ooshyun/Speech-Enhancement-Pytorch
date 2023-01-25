@@ -1,5 +1,5 @@
 import os
-import torch
+import random
 import julius
 import librosa
 import numpy as np
@@ -35,9 +35,17 @@ class WavDataset(Dataset):
         assert os.path.exists(mixture_dataset) and os.path.exists(clean_dataset)
 
         print("Search datasets...")
-        mixture_wav_files = librosa.util.find_files(mixture_dataset, ext="wav", limit=limit, offset=offset)
-        clean_wav_files = librosa.util.find_files(clean_dataset, ext="wav", limit=limit, offset=offset)
-
+        mixture_wav_files_find = librosa.util.find_files(mixture_dataset, ext="wav", limit=limit, offset=offset)
+        clean_wav_files_find = librosa.util.find_files(clean_dataset, ext="wav", limit=limit, offset=offset)
+        index_wav_files = np.arange(len(mixture_wav_files_find))
+        random.shuffle(index_wav_files)
+        
+        mixture_wav_files = []
+        clean_wav_files = []
+        for ifile in index_wav_files:
+            mixture_wav_files.append(mixture_wav_files_find[ifile])
+            clean_wav_files.append(clean_wav_files_find[ifile])
+        
         assert len(mixture_wav_files) == len(clean_wav_files)
         print(f"\t Original length: {len(mixture_wav_files)}")
 
@@ -77,21 +85,22 @@ class WavDataset(Dataset):
             "std": 0,
         }
 
+        eps = 1e-6
         if self.normalize == "z-score":
             mixture_metadata["mean"] = np.mean(mixture, axis=-1)
             mixture_metadata["std"] = np.std(mixture, axis=-1)
             clean_metadata["mean"] = np.mean(clean, axis=-1)
             clean_metadata["std"] = np.std(clean, axis=-1)
-            mixture = (mixture-mixture_metadata["mean"])/mixture_metadata["std"]
-            clean = (clean-clean_metadata["mean"])/clean_metadata["std"]
+            mixture = (mixture-mixture_metadata["mean"])/(mixture_metadata["std"]+eps)
+            clean = (clean-clean_metadata["mean"])/(clean_metadata["std"]+eps)
         
         if self.normalize == "linear-scale":
             mixture_metadata["max"] = np.max(mixture, axis=-1, keepdims=True)
             mixture_metadata["min"] = np.min(mixture, axis=-1, keepdims=True)
             clean_metadata["max"] = np.max(clean, axis=-1, keepdims=True)
             clean_metadata["min"] = np.min(clean, axis=-1, keepdims=True)
-            mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"])
-            clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"])
+            mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
+            clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
 
         if len(mixture.shape) == 1:
             mixture = np.expand_dims(mixture, 0)
