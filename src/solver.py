@@ -42,15 +42,6 @@ import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
-from torchmetrics import (
-    ScaleInvariantSignalDistortionRatio,
-
-)
-from torchmetrics.audio import (
-    ShortTimeObjectiveIntelligibility,
-    PerceptualEvaluationSpeechQuality,
-)
-
 from .metric import (
     WB_PESQ,
     STOI,
@@ -62,7 +53,17 @@ from .utils import (
     obj2dict,
 )
 
-# from torchaudio.transforms import S
+# from torchmetrics import __version__ as torchmetrics_version
+
+# try:
+#     from torchmetrics import ScaleInvariantSignalDistortionRatio
+#     from torchmetrics.audio import (
+#     ShortTimeObjectiveIntelligibility,
+#     PerceptualEvaluationSpeechQuality,
+# )
+# except ImportError:
+#     from torchmetrics import SI_SDR as ScaleInvariantSignalDistortionRatio
+
 
 class Solver(object):
     def __init__(self, 
@@ -104,13 +105,13 @@ class Solver(object):
                     "pesq": 0,
                     "sisdr": 0,}
 
-        self.metric_torch_reference = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
-                    "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
-                    "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
+        # self.metric_torch_reference = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
+        #             "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
+        #             "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
         
-        self.metric_torch_estimation = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
-                    "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
-                    "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
+        # self.metric_torch_estimation = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
+        #             "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
+        #             "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
         
 
         self.metric = {"stoi": STOI,
@@ -390,10 +391,10 @@ class Solver(object):
                     "clean and enhanced": self.score[metric],
                 }, epoch)
 
-                self.writer.add_scalars(f"Validation/{metric}_torch", {
-                    "clean and noisy": self.metric_torch_reference[metric].compute(),
-                    "clean and enhanced": self.metric_torch_estimation[metric].compute(),
-                }, epoch)
+                # self.writer.add_scalars(f"Validation/{metric}_torch", {
+                #     "clean and noisy": self.metric_torch_reference[metric].compute(),
+                #     "clean and enhanced": self.metric_torch_estimation[metric].compute(),
+                # }, epoch)
 
         return self.score["loss"] if train else self.score[self.config.solver.validation.metric]
 
@@ -471,8 +472,8 @@ class Solver(object):
             score_mixture = []
             score_enhanced = []
 
-            self.metric_torch_reference[metric].update(preds=mixture, target=clean)
-            self.metric_torch_estimation[metric].update(preds=enhanced, target=clean)
+            # self.metric_torch_reference[metric].update(preds=mixture, target=clean)
+            # self.metric_torch_estimation[metric].update(preds=enhanced, target=clean)
             score_mixture.append(self.metric[metric](estimation=mixture, reference=clean))
             score_enhanced.append(self.metric[metric](estimation=enhanced, reference=clean))
 
