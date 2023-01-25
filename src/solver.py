@@ -217,7 +217,8 @@ class Solver(object):
                         )
         
         _, nfeature, nframe, ndtype = tensor.size()
-        return tensor.reshape(batch, nchannel, nfeature, nframe, ndtype)
+        tensor = tensor.reshape(batch, nchannel, nfeature, nframe, ndtype)
+        return tensor
 
         
 
@@ -241,7 +242,8 @@ class Solver(object):
             return_complex=False,
         )
         _, nsample = tensor.size()
-        return tensor.reshape(batch, nchannel, nsample)
+        tensor = tensor.reshape(batch, nchannel, nsample)
+        return tensor
 
 
     def _save_checkpoint(self, epoch, is_best=False):
@@ -300,7 +302,7 @@ class Solver(object):
 
     def train(self):
         for epoch in range(1, self.epochs+1):
-            print(f"============== {epoch} / {self.epochs+1} epoch ==============")
+            print(f"============== {epoch} / {self.epochs} epoch ==============")
             print("[0 seconds] Begin training...")
             
             start_time = time.time()
@@ -338,22 +340,30 @@ class Solver(object):
 
         dataloader = self.train_dataloader if train else self.validation_dataloader
         with tqdm.tqdm(dataloader, ncols=120) as tepoch:
-            for step, (mixture, clean, name, index) in enumerate(tepoch):
+            for step, batch in enumerate(tepoch):
+                if len(batch) == 4:
+                    mixture, clean, name, index = batch
+                else:
+                    mixture, clean, mixture_metadata, clean_metadata, name, index = batch
+
+                mixture = mixture.to(self.device)
+                clean = clean.to(self.device)
+
                 if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
                     # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
                     mixture = self._stft(mixture)
                     clean = self._stft(clean)                 
 
                 tepoch.set_description(f"Epoch {epoch}")
-                
-                mixture.requires_grad = True
-                clean.requires_grad = True
-                
-                mixture = mixture.to(self.device)
-                clean = clean.to(self.device)
 
-                enhanced = self.model(mixture)
+                if train:
+                    enhanced = self.model(mixture)
+                if not train:
+                    enhanced = self.model(mixture)
+                assert clean.shape == mixture.shape == enhanced.shape
+
                 loss = self.loss_function(clean, enhanced)
+                
                 if train:
                     self.optimizer.zero_grad()
                     loss.backward()
@@ -361,21 +371,37 @@ class Solver(object):
                         torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(),
                         self.config.optim.clip_grad)
-
                     self.optimizer.step()
-                    loss_total += loss.item()
-                    tepoch.set_postfix(loss=loss.item())
-                else:
+
+                loss_total += loss.detach().cpu().numpy()
+                tepoch.set_postfix(loss=loss.detach().cpu().numpy())
+                
+                if not train:
                     with torch.no_grad():
                         if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
+                            enhanced = enhanced.detach()
+                            # if self.config.dset.norm == "z-score":
+                            #     for ibatch in range(mixture.shape[0]):
+                            #         print(mixture_metadata)
+                            #         mixture[ibatch] = mixture[ibatch]*mixture_metadata["std"][ibatch]+mixture_metadata["mean"][ibatch]
+                            #         clean[ibatch] = clean[ibatch]*clean_metadata["std"][ibatch]-clean_metadata["mean"][ibatch]
+                            #         enhanced[ibatch] = enhanced[ibatch]*mixture_metadata["std"][ibatch]+mixture_metadata["mean"][ibatch]
+                            
+                            # if self.config.dset.norm == "linear-scale":
+                            #     for ibatch in range(mixture.shape[0]):
+                            #         mixture[ibatch] = mixture[ibatch]*(mixture_metadata["max"][ibatch] - mixture_metadata["min"][ibatch])+mixture_metadata["min"][ibatch]
+                            #         clean[ibatch] = clean[ibatch]*(clean_metadata["max"][ibatch] - clean_metadata["min"][ibatch])+clean_metadata["min"][ibatch]
+                            #         enhanced[ibatch] = enhanced[ibatch]*(mixture_metadata["max"][ibatch] - mixture_metadata["min"][ibatch])+mixture_metadata["min"][ibatch]
+
                             mixture = self._istft(mixture)
                             clean = self._istft(clean)
                             enhanced = self._istft(enhanced)
+
                         self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean, epoch=epoch)
                         self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, names=name, index=index, epoch=epoch)
                     
                         valid_name = self.config.solver.validation.metric
-                        tepoch.set_postfix(loss=loss.item(), valid_name=self.score[valid_name] / (step+1))
+                        tepoch.set_postfix(loss=loss.detach().cpu().numpy(), valid_name=self.score[valid_name] / (step+1))
 
         if train:
             self.score["loss"] = loss_total / len(dataloader)        

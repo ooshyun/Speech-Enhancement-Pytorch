@@ -18,10 +18,19 @@ def collate_fn_pad(config, drop_last=True):
     def _collate_fn_pad(batch):
         mixture_list = []
         clean_list = []
+        mixture_metadata_list = []
+        clean_metadata_list = []
         names = []
         index_batch = []
 
-        for mixture, clean, name in batch:
+        for one_batch in batch:
+            if len(one_batch) == 3:
+                mixture, clean, name = one_batch
+            else:
+                mixture, clean, mixture_metadata, clean_metadata, name = one_batch
+                mixture_metadata_list.append(mixture_metadata)
+                clean_metadata_list.append(clean_metadata)
+
             segment_length = int(config.segment * config.sample_rate)
 
             if drop_last and mixture.size()[-1] % segment_length != 0 and mixture.size()[-1] > segment_length:
@@ -53,10 +62,18 @@ def collate_fn_pad(config, drop_last=True):
         #   return (longest_T, len(seq_list), *)
         # list = pad_sequence(list)
         
-        mixture_list = torch.concat(mixture_list, dim=1).permute(1, 0, 2)
-        clean_list = torch.concat(clean_list, dim=1).permute(1, 0, 2)
+        try:
+            mixture_list = torch.concat(mixture_list, dim=1).permute(1, 0, 2)
+            clean_list = torch.concat(clean_list, dim=1).permute(1, 0, 2)
+        except AttributeError:
+            # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
+            mixture_list = torch.cat(mixture_list, dim=1).permute(1, 0, 2)
+            clean_list = torch.cat(clean_list, dim=1).permute(1, 0, 2)
 
-        return mixture_list, clean_list, names, index_batch
+        if len(mixture_metadata_list) == 0:
+            return mixture_list, clean_list, names, index_batch
+        else:
+            return mixture_list, clean_list, mixture_metadata_list, clean_metadata_list, names, index_batch
     return _collate_fn_pad
 
 def get_train_wav_dataset(config):
@@ -70,7 +87,8 @@ def get_train_wav_dataset(config):
                                 clean_dataset=clean_path_dataset,
                                 sample_length=sample_length if not config.use_all else None,
                                 limit=None,
-                                offset=0))
+                                offset=0,
+                                normalize=config.norm,))
     dataset = ConcatDataset(dataset)
 
     n_train = int(len(dataset) * config.split)

@@ -26,7 +26,7 @@ optim:
 model:
   # wav-unet, dcunet, mel-rnn, 
   # [TODO] Test crn, demucs, conv-tasnet, ddcrn
-  name: 'mel-rnn'
+  name: 'dcunet'
   input_channels: 1
   segment: 1.024
   sample_rate: 16000
@@ -44,7 +44,7 @@ model:
   # DCUnet
   model_complexity: 45
   model_depth: 10 
-  data_type: False 
+  data_type: True 
   padding_mode: 'zeros'
   # Unet
   unet_nlayers: 24
@@ -52,15 +52,14 @@ model:
 
     
 dset:
-  wav: './test/data/TestVoiceBankDEMAND/DS_10283_2791'
+  wav: './data/VoiceBankDEMAND/DS_10283_2791'
   split: 0.7
   segment: 1.024  
   use_all: True
   shift: None
   sample_rate: 16000
-  normalize: 'z-score'
-  # normalize: 'linear-scale'
-  fft: False
+  norm: 'z-score'
+  # norm: 'linear-scale'
   n_fft: 512
   win_length: 512
   hop_length: 256
@@ -68,18 +67,18 @@ dset:
   channels: 1
   
 solver:
-  root: './test'
-  epochs: 4
-  batch_size: 7
-  total_steps: 20
-  save_checkpoint_interval: 4
+  root: '.'
+  epochs: 1000
+  batch_size: 16
+  total_steps: 1000
+  save_checkpoint_interval: 10
   resume:
   preloaded_model:
   cudnn_deterministic: False
   validation:
-    interval: 4
+    interval: 20
     num_show: 10
-    metric: 'loss' # loss, stoi, pesq, sisdr
+    metric: 'sisdr' # loss, stoi, pesq, sisdr
     
 test:
   num_workers: 10
@@ -87,5 +86,5 @@ test:
   best: False
   save: True
   
-name: "test"
+name: "dcunet"
 seed: 10

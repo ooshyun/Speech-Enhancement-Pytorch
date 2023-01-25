@@ -370,7 +370,7 @@ if __name__ == "__main__":
     parser.add_argument("--hop_length", default=256, type=int)
     parser.add_argument("--model_depth", default=10, type=int) # 10, 20
     parser.add_argument("--device", default="cpu", type=str)
-    parser.add_argument("--data_type", default=False, type=bool)
+    parser.add_argument("--data_type", default=True, type=bool)
     parser.add_argument("--model_complexity", default=45, type=int) # 45, 90
     parser.add_argument("--padding_mode", default="zeros", type=str)
 
@@ -388,6 +388,7 @@ if __name__ == "__main__":
     x = torch.randn(1, nfeature, nframe, 2).to(args.device) # channel, F, T, real/imag
 
     out = model(x[None])[0]
+    print(out.shape)
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")
     

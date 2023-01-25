@@ -1,4 +1,5 @@
 **
+!*.py
 !src/
 !test/
 !LICENSE

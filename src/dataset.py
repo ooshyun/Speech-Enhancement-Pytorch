@@ -1,4 +1,5 @@
 import os
+import torch
 import julius
 import librosa
 import numpy as np
@@ -20,6 +21,7 @@ class WavDataset(Dataset):
                  sample_length,
                  limit=None,
                  offset=0,
+                 normalize="",
                  ):
         """
         Construct train dataset
@@ -43,10 +45,12 @@ class WavDataset(Dataset):
         self.sample_length = sample_length
         self.mixture_wav_files = mixture_wav_files
         self.clean_wav_files = clean_wav_files
+        self.normalize = normalize
 
         print(f"\t Offset: {offset}")
         print(f"\t Limit: {limit}")
         print(f"\t Final length: {self.length}")
+        print(f"\t Norm:  {self.normalize}")
 
     def __len__(self):
         return self.length
@@ -58,6 +62,36 @@ class WavDataset(Dataset):
 
         mixture, sr = sf.read(mixture_path, dtype="float32")
         clean, sr = sf.read(clean_path, dtype="float32")
+
+        mixture_metadata = {
+            "min": 0,
+            "max": 0,
+            "mean": 0,
+            "std": 0,
+        }
+
+        clean_metadata = {
+            "min": 0,
+            "max": 0,
+            "mean": 0,
+            "std": 0,
+        }
+
+        if self.normalize == "z-score":
+            mixture_metadata["mean"] = np.mean(mixture, axis=-1)
+            mixture_metadata["std"] = np.std(mixture, axis=-1)
+            clean_metadata["mean"] = np.mean(clean, axis=-1)
+            clean_metadata["std"] = np.std(clean, axis=-1)
+            mixture = (mixture-mixture_metadata["mean"])/mixture_metadata["std"]
+            clean = (clean-clean_metadata["mean"])/clean_metadata["std"]
+        
+        if self.normalize == "linear-scale":
+            mixture_metadata["max"] = np.max(mixture, axis=-1, keepdims=True)
+            mixture_metadata["min"] = np.min(mixture, axis=-1, keepdims=True)
+            clean_metadata["max"] = np.max(clean, axis=-1, keepdims=True)
+            clean_metadata["min"] = np.min(clean, axis=-1, keepdims=True)
+            mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"])
+            clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"])
 
         if len(mixture.shape) == 1:
             mixture = np.expand_dims(mixture, 0)
@@ -73,8 +107,9 @@ class WavDataset(Dataset):
 
         if self.sample_length:
             mixture, clean = sample_fixed_length_data_aligned(mixture, clean, self.sample_length)
-
-
-        return mixture, clean, name
-
+        
+        if self.normalize:
+            return mixture, clean, mixture_metadata, clean_metadata, name
+        else:
+            return mixture, clean, name            
 

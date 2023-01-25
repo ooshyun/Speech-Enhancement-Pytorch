@@ -26,7 +26,7 @@ optim:
 model:
   # wav-unet, dcunet, mel-rnn, 
   # [TODO] Test crn, demucs, conv-tasnet, ddcrn
-  name: 'mel-rnn'
+  name: 'dcunet'
   input_channels: 1
   segment: 1.024
   sample_rate: 16000
@@ -44,7 +44,7 @@ model:
   # DCUnet
   model_complexity: 45
   model_depth: 10 
-  data_type: False 
+  data_type: True 
   padding_mode: 'zeros'
   # Unet
   unet_nlayers: 24
@@ -58,9 +58,8 @@ dset:
   use_all: True
   shift: None
   sample_rate: 16000
-  normalize: 'z-score'
-  # normalize: 'linear-scale'
-  fft: False
+  norm: 'z-score'
+  # norm: 'linear-scale'
   n_fft: 512
   win_length: 512
   hop_length: 256
