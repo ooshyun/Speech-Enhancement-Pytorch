@@ -66,7 +66,6 @@ from .utils import (
 #     from torchmetrics import SI_SDR as ScaleInvariantSignalDistortionRatio
 
 import sys
-from .gpu_profile import gpu_profile
 
 class Solver(object):
     def __init__(self, 
@@ -85,7 +84,6 @@ class Solver(object):
 
         os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
         os.environ['GPU_DEBUG']='0'
-        sys.settrace(gpu_profile)
 
         self.optimizer = optimizer
         self.loss_function = loss_function
@@ -315,9 +313,10 @@ class Solver(object):
             start_time = time.time()
 
             score = self._run_one_epoch(epoch, self.epochs, train=True)
-
-            gpu_profile(frame=sys._getframe(), event='line', arg=None)
-
+            
+            print(f"[GPU Usage]: ", torch.cuda.memory_allocated(device=self.device))
+            torch.cuda.empty_cache()
+            
             if epoch % self.save_checkpoint_interval == 0:
                 self._save_checkpoint(epoch)
 
@@ -366,13 +365,13 @@ class Solver(object):
 
                 if train:
                     self.model.train()
-                    enhanced = self.model(mixture)
+                    enhanced: torch.Tensor = self.model(mixture)
                 if not train:
                     self.model.eval()
-                    enhanced = self.model(mixture)
+                    enhanced: torch.Tensor = self.model(mixture)
                 assert clean.shape == mixture.shape == enhanced.shape
 
-                loss = self.loss_function(clean, enhanced)
+                loss: torch.Tensor = self.loss_function(clean, enhanced)
                 
                 if train:
                     self.optimizer.zero_grad()
@@ -384,15 +383,15 @@ class Solver(object):
                         self.config.optim.clip_grad)
                     self.optimizer.step()
 
-                loss_detach = loss.detach().item()
-                loss_total += loss_detach
-                tepoch.set_postfix(loss=loss_detach)
+                loss = loss.detach().item()
+                loss_total += loss
                 
                 if not train:
                     with torch.no_grad():
-                        mixture = mixture.cpu()
-                        clean = clean.cpu()
-                        enhanced = enhanced.detach().cpu()
+                        mixture = mixture.detach()
+                        clean = clean.detach()
+                        enhanced = enhanced.detach()
+
                         if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
                             mixture = self._istft(mixture)
                             clean = self._istft(clean)
@@ -420,17 +419,22 @@ class Solver(object):
                                 enhanced[start:start+index[i]] = enhanced[start:start+index[i]]*(mixture_meta_max-mixture_meta_min)+mixture_meta_min
                                 start += index[i]
 
+                        mixture = mixture.cpu()
+                        clean = clean.cpu()
+                        enhanced = enhanced.cpu()
 
                         self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean, epoch=epoch)
                         self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, names=name, index=index, epoch=epoch)
-                    
-                        valid_name = self.config.solver.validation.metric
-                        tepoch.set_postfix(loss=loss.detach().cpu().numpy(), metric=self.score[valid_name] / (step+1))
 
         if train:
+            tepoch.set_postfix(loss=loss)
+
             self.score["loss"] = loss_total / len(dataloader)        
             self.writer.add_scalar(f"Train/Loss", self.score["loss"], epoch)
-        else:        
+        
+        if not train:        
+            tepoch.set_postfix(loss=loss, metric=self.score[self.config.solver.validation.metric] / (step+1))
+
             length_dataloader = len(dataloader)
             for metric in list(self.metric.keys()):
                 self.score_reference[metric] = self.score_reference[metric] / length_dataloader
