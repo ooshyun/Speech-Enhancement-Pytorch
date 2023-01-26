@@ -111,9 +111,10 @@ def get_dataloader(dataset: Dataset, config):
     num_worker = os.cpu_count()
     print("\tThe number of CPU: ", num_worker)
     
-    if not(config.dset.use_all) and (config.solver.total_steps < len(dataset)):
+    total_step = config.solver.total_steps*config.solver.batch_size
+    if not(config.dset.use_all) and (total_step < len(dataset)):
         print("\tSubset from total_steps!!!")
-        dataset = Subset(dataset=dataset, indices=list(range(config.solver.total_steps)))
+        dataset = Subset(dataset=dataset, indices=list(range(total_step)))
 
     dataloader = DataLoader(dataset=dataset,
                                 batch_size=config.solver.batch_size,
