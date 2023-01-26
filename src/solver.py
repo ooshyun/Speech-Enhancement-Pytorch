@@ -141,7 +141,8 @@ class Solver(object):
         self.config = config
         if config.solver.resume: self._resume_checkpoint()
         if config.solver.preloaded_model: self._preload_model() 
-        
+
+        print(f"\n Save to {self.root_dir}")
         print("\nConfigurations are as follows: ")
         print(  obj2dict(config))        
         copyfile(config.root, (self.root_dir / "config.yaml").as_posix())
@@ -394,6 +395,10 @@ class Solver(object):
                         clean = self._istft(clean)
                         enhanced = self._istft(enhanced)
 
+                    mixture = mixture.cpu()
+                    clean = clean.cpu()
+                    enhanced = enhanced.cpu()
+                    
                     if self.config.dset.norm == "z-score":
                         start = 0
                         for i in range(len(index)):
@@ -415,10 +420,6 @@ class Solver(object):
                             clean[start:start+index[i]] = clean[start:start+index[i]]*(clean_meta_max-clean_meta_min)+clean_meta_min
                             enhanced[start:start+index[i]] = enhanced[start:start+index[i]]*(mixture_meta_max-mixture_meta_min)+mixture_meta_min
                             start += index[i]
-
-                    mixture = mixture.cpu()
-                    clean = clean.cpu()
-                    enhanced = enhanced.cpu()
 
                     self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean, epoch=epoch)
                     self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, names=name, index=index, epoch=epoch)
