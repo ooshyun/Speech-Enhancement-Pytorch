@@ -74,7 +74,7 @@ solver:
   save_checkpoint_interval: 10
   resume:
   preloaded_model:
-  cudnn_deterministic: False
+  cudnn_deterministic: True
   validation:
     interval: 20
     num_show: 10

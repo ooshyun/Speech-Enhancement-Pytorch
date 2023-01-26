@@ -1,5 +1,11 @@
+import os
 import torch
-from torch.utils.data import ConcatDataset, random_split
+from torch.utils.data import (
+    Dataset,
+    ConcatDataset,
+    DataLoader,
+    random_split,
+)
 from torch.nn.functional import pad
 # from torch.nn.utils.rnn import pad_sequence
 
@@ -96,8 +102,32 @@ def get_train_wav_dataset(config):
     
     train_dataset, validation_dataset = random_split(dataset, lengths=[n_train, n_validation])
 
+    print(f"Train {len(train_dataset)}, Validation {len(validation_dataset)}")
+
     return train_dataset, validation_dataset
 
+def get_dataloader(dataset: Dataset, config):
+    num_worker = os.cpu_count()
+    print("\tThe number of CPU: ", num_worker)
+    
+    dataloader = DataLoader(dataset=dataset,
+                                batch_size=config.solver.batch_size,
+                                shuffle=True,
+                                # sampler=,
+                                # batch_sampler=,
+                                # num_workers=num_worker,
+                                collate_fn=collate_fn_pad(config.dset, drop_last=True),
+                                pin_memory=True,
+                                # drop_last=True,
+                                # timeout=,
+                                # worker_init_fn=,
+                                # multiprocessing_context=,
+                                # generator=,
+                                # prefetch_factor=,
+                                # persistent_workers=,
+                                # pin_memory_device=,
+                                )
+    return dataloader
 
 def get_model(config):
     klass = {
