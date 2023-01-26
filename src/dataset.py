@@ -10,6 +10,14 @@ from .utils import(
 from torch import from_numpy
 from torch.utils.data import Dataset 
 
+def get_num_segments(files, sample_rate):
+    total_num_segement = 0
+    for file in files:
+        mixture, sr = sf.read(file, dtype="float32")
+        total_num_segement += int(mixture.shape[-1]/sr * sample_rate)
+    return total_num_segement
+
+
 class WavDataset(Dataset):
     """
     Define train dataset
@@ -59,7 +67,7 @@ class WavDataset(Dataset):
         print(f"\t Limit: {limit}")
         print(f"\t Final length: {self.length}")
         print(f"\t Norm:  {self.normalize}")
-
+            
     def __len__(self):
         return self.length
 

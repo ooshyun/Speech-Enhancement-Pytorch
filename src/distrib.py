@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import (
     Dataset,
     ConcatDataset,
+    Subset,
     DataLoader,
     random_split,
 )
@@ -60,7 +61,7 @@ def collate_fn_pad(config, drop_last=True):
             clean_list.append(clean)
             names.append(name)
             index_batch.append(mixture.size()[1])
-
+            
             assert mixture.size() == clean.size()
 
         # seq_list = [(T1, nsample), (T2, nsample), ...]
@@ -110,6 +111,10 @@ def get_dataloader(dataset: Dataset, config):
     num_worker = os.cpu_count()
     print("\tThe number of CPU: ", num_worker)
     
+    if not(config.dset.use_all) and (config.solver.total_steps < len(dataset)):
+        print("\tSubset from total_steps!!!")
+        dataset = Subset(dataset=dataset, indices=list(range(config.solver.total_steps)))
+
     dataloader = DataLoader(dataset=dataset,
                                 batch_size=config.solver.batch_size,
                                 shuffle=True,

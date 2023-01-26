@@ -55,7 +55,7 @@ dset:
   wav: './data/VoiceBankDEMAND/DS_10283_2791'
   split: 0.7
   segment: 1.024  
-  use_all: True
+  use_all: False
   shift: None
   sample_rate: 16000
   norm: 'z-score'
