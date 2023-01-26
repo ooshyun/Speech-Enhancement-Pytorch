@@ -523,13 +523,10 @@ class Solver(object):
     def compute_metric(self, mixture, enhanced, clean, epoch):
         metric_name = list(self.metric.keys())
         for metric in metric_name:
-            score_mixture = []
-            score_enhanced = []
-
             # self.metric_torch_reference[metric].update(preds=mixture, target=clean)
             # self.metric_torch_estimation[metric].update(preds=enhanced, target=clean)
-            score_mixture.append(self.metric[metric](estimation=mixture, reference=clean))
-            score_enhanced.append(self.metric[metric](estimation=enhanced, reference=clean))
+            score_mixture = self.metric[metric](estimation=mixture, reference=clean)
+            score_enhanced = self.metric[metric](estimation=enhanced, reference=clean)
 
-            self.score_reference[metric] += np.mean(score_mixture)
-            self.score[metric] += np.mean(score_enhanced)
+            self.score_reference[metric] += score_mixture
+            self.score[metric] += score_enhanced
