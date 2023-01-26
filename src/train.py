@@ -18,7 +18,7 @@ def main(path_config):
     np.random.seed(config.seed)
     random.seed(config.seed)
     
-    train_dataset, validation_dataset = get_train_wav_dataset(config.dset)
+    train_dataset, validation_dataset = get_train_wav_dataset(config.dset, config.default.dset)
     train_dataloader, validation_dataloader = get_dataloader(train_dataset, config), get_dataloader(validation_dataset, config)
                                 
     model = get_model(config.model)

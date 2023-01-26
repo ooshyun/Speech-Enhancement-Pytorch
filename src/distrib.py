@@ -10,7 +10,7 @@ from torch.utils.data import (
 from torch.nn.functional import pad
 # from torch.nn.utils.rnn import pad_sequence
 
-from .dataset import WavDataset
+from .dataset import WavDataset, ClarityWavDataset
 from .utils import find_folder, obj2dict
 
 from .model.conv_tasnet import ConvTasNet
@@ -83,12 +83,11 @@ def collate_fn_pad(config, drop_last=True):
             return mixture_list, clean_list, mixture_metadata_list, clean_metadata_list, names, index_batch
     return _collate_fn_pad
 
-def get_train_wav_dataset(config):
-    mixture_dataset_path_list = find_folder(name="noisy_trainset", path=config.wav)
-    clean_dataset_path_list = find_folder(name="clean_trainset", path=config.wav)
-    
-    dataset = []
+def get_train_wav_voicebankdemand(config):
     sample_length = int(config.sample_rate*config.segment)
+    mixture_dataset_path_list = find_folder(name="noisy_trainset", path=config.wav)
+    clean_dataset_path_list = find_folder(name="clean_trainset", path=config.wav)    
+    dataset = []
     for mixture_path_dataset, clean_path_dataset in zip(mixture_dataset_path_list, clean_dataset_path_list):
         dataset.append(WavDataset(mixture_dataset=mixture_path_dataset,
                                 clean_dataset=clean_path_dataset,
@@ -97,6 +96,25 @@ def get_train_wav_dataset(config):
                                 offset=0,
                                 normalize=config.norm,))
     dataset = ConcatDataset(dataset)
+    return dataset
+
+def get_train_wav_clarity(config):
+    sample_length = int(config.sample_rate*config.segment)
+    dataset = ClarityWavDataset(path_dataset=config.wav,
+                        sample_length=sample_length if not config.use_all else None,
+                        limit=None,
+                        offset=0,
+                        normalize=config.norm,)     
+    return dataset
+
+def get_train_wav_dataset(config, name):
+    if name == "VoiceBankDEMAND":
+        dataset = get_train_wav_voicebankdemand(config)
+    
+    elif name == "Clarity":
+        dataset = get_train_wav_clarity(config)       
+    else:
+        raise ValueError(f"{name} dataset is not implemented")
 
     n_train = int(len(dataset) * config.split)
     n_validation = len(dataset)- int(len(dataset) * config.split)

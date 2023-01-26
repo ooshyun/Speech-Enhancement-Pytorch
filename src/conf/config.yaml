@@ -1,7 +1,7 @@
 default:
-  - _self_
-  - dset: VoiceBankDEMAND
-
+  # dset: VoiceBankDEMAND
+  dset: Clarity
+  
 dummy:
 misc:
   num_workers: 1
@@ -52,7 +52,8 @@ model:
 
     
 dset:
-  wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  # wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data/train/scenes'
   split: 0.7
   segment: 1.024  
   use_all: False

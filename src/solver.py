@@ -142,6 +142,7 @@ class Solver(object):
         if config.solver.resume: self._resume_checkpoint()
         if config.solver.preloaded_model: self._preload_model() 
         
+        print(f"\n Save to {self.root_dir}")
         print("\nConfigurations are as follows: ")
         print(  obj2dict(config))        
         copyfile(config.root, (self.root_dir / "config.yaml").as_posix())
@@ -207,7 +208,7 @@ class Solver(object):
     def _stft(self, tensor: torch.Tensor):
         batch, nchannel, nsample = tensor.size()
     
-        tensor = tensor.view(batch*nchannel, nsample)
+        tensor = tensor.reshape(batch*nchannel, nsample)
 
         tensor = torch.stft(input=tensor,
                         n_fft=self.config.model.n_fft,
@@ -224,13 +225,11 @@ class Solver(object):
         _, nfeature, nframe, ndtype = tensor.size()
         tensor = tensor.reshape(batch, nchannel, nfeature, nframe, ndtype)
         return tensor
-
         
-
     def _istft(self, tensor: torch.Tensor):
         batch, nchannel, nfeature, nframe, ndtype = tensor.size()
         tensor *= self.config.model.win_length
-        tensor = tensor.view(batch*nchannel, nfeature, nframe, ndtype)
+        tensor = tensor.reshape(batch*nchannel, nfeature, nframe, ndtype)
         tensor_complex = torch.complex(real=tensor[..., 0], imag=tensor[..., 1])
         
         tensor = torch.istft(
@@ -394,6 +393,10 @@ class Solver(object):
                         clean = self._istft(clean)
                         enhanced = self._istft(enhanced)
 
+                    mixture = mixture.cpu()
+                    clean = clean.cpu()
+                    enhanced = enhanced.cpu()
+                    
                     if self.config.dset.norm == "z-score":
                         start = 0
                         for i in range(len(index)):
@@ -415,10 +418,6 @@ class Solver(object):
                             clean[start:start+index[i]] = clean[start:start+index[i]]*(clean_meta_max-clean_meta_min)+clean_meta_min
                             enhanced[start:start+index[i]] = enhanced[start:start+index[i]]*(mixture_meta_max-mixture_meta_min)+mixture_meta_min
                             start += index[i]
-
-                    mixture = mixture.cpu()
-                    clean = clean.cpu()
-                    enhanced = enhanced.cpu()
 
                     self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean, epoch=epoch)
                     self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, names=name, index=index, epoch=epoch)

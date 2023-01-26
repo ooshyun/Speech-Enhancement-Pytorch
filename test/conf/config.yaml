@@ -1,7 +1,7 @@
 default:
-  - _self_
-  - dset: VoiceBankDEMAND
-
+  # dset: VoiceBankDEMAND
+  dset: Clarity
+  
 dummy:
 misc:
   num_workers: 1
@@ -52,7 +52,8 @@ model:
 
     
 dset:
-  wav: './test/data/TestVoiceBankDEMAND/DS_10283_2791'
+  # wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data/train/scenes'
   split: 0.7
   segment: 1.024  
   use_all: False
@@ -67,18 +68,18 @@ dset:
   channels: 1
   
 solver:
-  root: './test'
-  epochs: 4
-  batch_size: 7
-  total_steps: 20
-  save_checkpoint_interval: 4
+  root: '.'
+  epochs: 1
+  batch_size: 16
+  total_steps: 2
+  save_checkpoint_interval: 1
   resume:
   preloaded_model:
   cudnn_deterministic: True
   validation:
-    interval: 4
+    interval: 1
     num_show: 10
-    metric: 'loss' # loss, stoi, pesq, sisdr
+    metric: 'sisdr' # loss, stoi, pesq, sisdr
     
 test:
   num_workers: 10
@@ -86,5 +87,5 @@ test:
   best: False
   save: True
   
-name: "test"
+name: "dcunet"
 seed: 10
