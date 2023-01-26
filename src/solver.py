@@ -27,7 +27,8 @@ STFT model(real, imag)
 # wav-unet, dcunet, mel-rnn, 
 # [TODO] Test crn, demucs, conv-tasnet, ddcrn 
 """
-
+import os
+import gc
 import time
 import json
 import tqdm
@@ -64,6 +65,8 @@ from .utils import (
 # except ImportError:
 #     from torchmetrics import SI_SDR as ScaleInvariantSignalDistortionRatio
 
+import sys
+from .gpu_profile import gpu_profile
 
 class Solver(object):
     def __init__(self, 
@@ -74,16 +77,21 @@ class Solver(object):
                 train_dataloader,
                 validation_dataloader
                 ):
+        
         self.train_dataloader = train_dataloader
         self.validation_dataloader = validation_dataloader
         self.n_gpu = torch.cuda.device_count()
         self.device = prepare_device(self.n_gpu, cudnn_deterministic=config.solver.cudnn_deterministic)
 
+        os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+        os.environ['GPU_DEBUG']='0'
+        sys.settrace(gpu_profile)
+
         self.optimizer = optimizer
         self.loss_function = loss_function
 
         self.model = model.to(self.device)
-
+        
         if self.n_gpu > 1:
             self.model = torch.nn.DataParallel(self.model, device_ids=list(range(self.n_gpu)))
 
@@ -208,7 +216,7 @@ class Solver(object):
                         n_fft=self.config.model.n_fft,
                         hop_length=self.config.model.hop_length,
                         win_length=self.config.model.win_length,
-                        window=torch.hann_window(window_length=self.config.model.win_length, dtype=tensor.dtype),
+                        window=torch.hann_window(window_length=self.config.model.win_length, dtype=tensor.dtype, device=tensor.device),
                         center=self.config.model.center,
                         pad_mode="reflect",
                         normalized=True, # *frame_length**(-0.5)
@@ -233,7 +241,7 @@ class Solver(object):
             n_fft=self.config.model.n_fft,
             hop_length=self.config.model.hop_length,
             win_length=self.config.model.win_length,
-            window=torch.hann_window(window_length=self.config.model.win_length, dtype=tensor.dtype),
+            window=torch.hann_window(window_length=self.config.model.win_length, dtype=tensor.dtype, device=tensor.device),
             center=self.config.model.center,
             length=int(self.config.model.segment*self.config.model.sample_rate),
             normalized=True,
@@ -307,7 +315,9 @@ class Solver(object):
             start_time = time.time()
 
             score = self._run_one_epoch(epoch, self.epochs, train=True)
-    
+
+            gpu_profile(frame=sys._getframe(), event='line', arg=None)
+
             if epoch % self.save_checkpoint_interval == 0:
                 self._save_checkpoint(epoch)
 
@@ -355,8 +365,10 @@ class Solver(object):
                 tepoch.set_description(f"Epoch {epoch}")
 
                 if train:
+                    self.model.train()
                     enhanced = self.model(mixture)
                 if not train:
+                    self.model.eval()
                     enhanced = self.model(mixture)
                 assert clean.shape == mixture.shape == enhanced.shape
 
@@ -372,8 +384,9 @@ class Solver(object):
                         self.config.optim.clip_grad)
                     self.optimizer.step()
 
-                loss_total += float(loss.detach().cpu().numpy())
-                tepoch.set_postfix(loss=float(loss.detach().cpu().numpy()))
+                loss_detach = loss.detach().item()
+                loss_total += loss_detach
+                tepoch.set_postfix(loss=loss_detach)
                 
                 if not train:
                     with torch.no_grad():
