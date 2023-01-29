@@ -88,7 +88,6 @@ def get_train_wav_voicebankdemand(config):
     train_dataset = []
     test_dataset = []
 
-    # [TODO] folder -> split file train/test -> WavDataset class change(folder -> file, divide train/test mode)
     for mixture_path_dataset, clean_path_dataset in zip(mixture_dataset_path_list, clean_dataset_path_list):
         num_files = len(glob.glob(f"{mixture_path_dataset}/*.wav"))
         assert num_files==len(glob.glob(f"{clean_path_dataset}/*.wav")), f"The number of clean and mixture files should be same..."

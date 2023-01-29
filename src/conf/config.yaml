@@ -56,8 +56,8 @@ model:
 
     
 dset:
-  # wav: './data/VoiceBankDEMAND/DS_10283_2791'
-  wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
+  wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  # wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
   split: [0.8, 0.15, 0.05]
   segment: 1.024  
   use_all: False
