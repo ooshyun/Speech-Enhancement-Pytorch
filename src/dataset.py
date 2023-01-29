@@ -1,11 +1,14 @@
 import os
+import time
+import torch
 import random
 import julius
 import librosa
 import numpy as np
 import soundfile as sf
+import omegaconf     
 from .utils import(
-    sample_fixed_length_data_aligned
+    sample_fixed_length_data_aligned,
 )
 from torch import from_numpy
 from torch.utils.data import Dataset 
@@ -26,10 +29,13 @@ class WavDataset(Dataset):
     def __init__(self,
                  mixture_dataset,
                  clean_dataset,
+                 scenes,
                  sample_length,
                  limit=None,
                  offset=0,
                  normalize="",
+                 sample_rate=16000,
+                 train=True
                  ):
         """
         Construct train dataset
@@ -39,29 +45,39 @@ class WavDataset(Dataset):
             limit (int): the limit of the dataset
             offset (int): the offset of the dataset
         """
-        print(mixture_dataset, clean_dataset)
-        assert os.path.exists(mixture_dataset) and os.path.exists(clean_dataset)
+        assert os.path.exists(mixture_dataset) and os.path.exists(clean_dataset),  f"Path {mixture_dataset} or {clean_dataset} is not existed..."
+        
+        print(f"Search dataset from {mixture_dataset}...")
 
-        print("Search datasets...")
         mixture_wav_files_find = librosa.util.find_files(mixture_dataset, ext="wav", limit=limit, offset=offset)
         clean_wav_files_find = librosa.util.find_files(clean_dataset, ext="wav", limit=limit, offset=offset)
-        index_wav_files = np.arange(len(mixture_wav_files_find))
-        random.shuffle(index_wav_files)
         
-        mixture_wav_files = []
-        clean_wav_files = []
-        for ifile in index_wav_files:
-            mixture_wav_files.append(mixture_wav_files_find[ifile])
-            clean_wav_files.append(clean_wav_files_find[ifile])
-        
+        mixture_wav_files_find = sorted(mixture_wav_files_find)
+        clean_wav_files_find = sorted(clean_wav_files_find)
+
+        mixture_wav_files_find = [mixture_wav_files_find[i] for i in scenes]
+        clean_wav_files_find = [clean_wav_files_find[i] for i in scenes]
+
+        if train:
+            index_wav_files = np.arange(len(mixture_wav_files_find))
+            random.shuffle(index_wav_files)
+            mixture_wav_files = [mixture_wav_files_find[i] for i in index_wav_files]
+            clean_wav_files = [clean_wav_files_find[i] for i in index_wav_files]
+        if not train:
+            mixture_wav_files = mixture_wav_files_find
+            clean_wav_files = clean_wav_files_find    
+
         assert len(mixture_wav_files) == len(clean_wav_files)
         print(f"\t Original length: {len(mixture_wav_files)}")
 
-        self.length = len(mixture_wav_files)
-        self.sample_length = sample_length
         self.mixture_wav_files = mixture_wav_files
         self.clean_wav_files = clean_wav_files
+
+        self.train = train
+        self.length = len(self.mixture_wav_files)
+        self.sample_length = sample_length
         self.normalize = normalize
+        self.sample_rate = sample_rate
 
         print(f"\t Offset: {offset}")
         print(f"\t Limit: {limit}")
@@ -75,71 +91,89 @@ class WavDataset(Dataset):
         mixture_path = self.mixture_wav_files[item]
         clean_path = self.clean_wav_files[item]
         name = os.path.splitext(os.path.basename(clean_path))[0]
-
+        
         mixture, sr = sf.read(mixture_path, dtype="float32")
         clean, sr = sf.read(clean_path, dtype="float32")
-
-        mixture_metadata = {
-            "min": 0,
-            "max": 0,
-            "mean": 0,
-            "std": 0,
-        }
-
-        clean_metadata = {
-            "min": 0,
-            "max": 0,
-            "mean": 0,
-            "std": 0,
-        }
-
-        eps = 1e-6
-        if self.normalize == "z-score":
-            mixture_metadata["mean"] = np.mean(mixture, axis=-1)
-            mixture_metadata["std"] = np.std(mixture, axis=-1)
-            clean_metadata["mean"] = np.mean(clean, axis=-1)
-            clean_metadata["std"] = np.std(clean, axis=-1)
-            mixture = (mixture-mixture_metadata["mean"])/(mixture_metadata["std"]+eps)
-            clean = (clean-clean_metadata["mean"])/(clean_metadata["std"]+eps)
-        
-        if self.normalize == "linear-scale":
-            mixture_metadata["max"] = np.max(mixture, axis=-1, keepdims=True)
-            mixture_metadata["min"] = np.min(mixture, axis=-1, keepdims=True)
-            clean_metadata["max"] = np.max(clean, axis=-1, keepdims=True)
-            clean_metadata["min"] = np.min(clean, axis=-1, keepdims=True)
-            mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
-            clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
+        original_length = mixture.shape[0]
 
         if len(mixture.shape) == 1:
             mixture = np.expand_dims(mixture, 0)
             clean = np.expand_dims(clean, 0)
 
-        if sr != 16000:
-            mixture = julius.resample_frac(from_numpy(mixture), sr, 16000)
-            clean = julius.resample_frac(from_numpy(clean), sr, 16000)
-            sr = 16000
+        curr_time = time.perf_counter()
 
-        assert sr == 16000
-        assert mixture.shape == clean.shape
+        if sr != self.sample_rate:
+            mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
+                                        output_length=None, full=False)
+            clean = julius.resample_frac(x=from_numpy(clean), old_sr=sr, new_sr=self.sample_rate,
+                                        output_length=None, full=False)
+            sr = self.sample_rate
 
-        if self.sample_length:
-            mixture, clean = sample_fixed_length_data_aligned(mixture, clean, self.sample_length)
-        
-        if self.normalize:
-            return mixture, clean, mixture_metadata, clean_metadata, name
-        else:
-            return mixture, clean, name            
+        if not item:
+            print("\nTime for resample: ", time.perf_counter()-curr_time)
+            
+        if not self.train:
+            return mixture, clean, original_length, name
 
+        if self.train:
+            mixture_metadata = {
+                "min": 0,
+                "max": 0,
+                "mean": 0,
+                "std": 0,
+            }
+
+            clean_metadata = {
+                "min": 0,
+                "max": 0,
+                "mean": 0,
+                "std": 0,
+            }
+
+            curr_time = time.perf_counter()
+            eps = 1e-6
+            if self.normalize == "z-score":
+                mixture_metadata["mean"] = torch.mean(mixture, axis=-1, keepdims=True)
+                mixture_metadata["std"] = torch.std(mixture, axis=-1, keepdims=True)
+                clean_metadata["mean"] = torch.mean(clean, axis=-1, keepdims=True)
+                clean_metadata["std"] = torch.std(clean, axis=-1, keepdims=True)
+                mixture = (mixture-mixture_metadata["mean"])/(mixture_metadata["std"]+eps)
+                clean = (clean-clean_metadata["mean"])/(clean_metadata["std"]+eps)
+            
+            if self.normalize == "linear-scale":
+                mixture_metadata["max"] = torch.max(mixture, axis=-1, keepdims=True)
+                mixture_metadata["min"] = torch.min(mixture, axis=-1, keepdims=True)
+                clean_metadata["max"] = torch.max(clean, axis=-1, keepdims=True)
+                clean_metadata["min"] = torch.min(clean, axis=-1, keepdims=True)
+                mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
+                clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
+            
+            if not item:
+                print("\nTime for norm: ", time.perf_counter()-curr_time)
+                curr_time = time.perf_counter()
+            
+
+            assert sr == self.sample_rate
+            assert mixture.shape == clean.shape
+
+            if self.sample_length:
+                mixture, clean = sample_fixed_length_data_aligned(mixture, clean, self.sample_length)
+            
+            return mixture, clean, mixture_metadata, clean_metadata, name       
+          
 class ClarityWavDataset(Dataset):
     """
     Define train dataset
     """
     def __init__(self,
                  path_dataset,
+                 scenes,
                  sample_length,
                  limit=None,
                  offset=0,
                  normalize="",
+                 sample_rate=16000,
+                 train=True
                  ):
         """
         Construct train dataset
@@ -176,56 +210,66 @@ class ClarityWavDataset(Dataset):
                  irm_02484.wav 
             
         """
-        print("Search datasets...")
-        wav_files_find = librosa.util.find_files(path_dataset, ext="wav", limit=limit, offset=offset)
-        scene_list = []
+        assert os.path.exists(path_dataset), f"Path {path_dataset} is not existed..."
+        
         source_list = ['hr', 'interferer', 'mix', 'target', 'target_anechoic']
         scene_channel_list = ['CH0', 'CH1', 'CH2', 'CH3']
-        ext_list = []
+        self.target_time = omegaconf.OmegaConf.load(os.path.join(path_dataset, "custom_metadata/scenes.train.time.json"))
 
-        for file in wav_files_find:
-            file_name, ext = file.split("/")[-1].split(".")
-            scene_name = file_name.split("_")[0]
-            if scene_name not in scene_list:
-                scene_list.append(scene_name)
-            if ext not in ext_list:
-                ext_list.append(ext)
-        
-        mixture_wav_files_find = []
-        clean_wav_files_find = []
+        # get dataset
+        if train:
+            mixture_wav_files_find = []
+            clean_wav_files_find = []
+            for scene in scenes:
+                for ch in scene_channel_list:
+                    clean_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[3]}_{ch}.wav'
+                    mixture_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[2]}_{ch}.wav'
+                
+                    clean_wav_files_find.append(clean_wav_file)
+                    mixture_wav_files_find.append(mixture_wav_file)
 
-        for scene in scene_list:
-            clean_wav_file = f'{path_dataset}/{scene}_{source_list[3]}_{scene_channel_list[1]}.{ext_list[0]}'
-            mixture_wav_file = f'{path_dataset}/{scene}_{source_list[2]}_{scene_channel_list[1]}.{ext_list[0]}'
+            clean_wav_files_find = sorted(clean_wav_files_find)
+            mixture_wav_files_find = sorted(mixture_wav_files_find)
+
+            index_wav_files = np.arange(len(mixture_wav_files_find))
+            random.shuffle(index_wav_files)
             
-            clean_wav_files_find.append(clean_wav_file)
-            mixture_wav_files_find.append(mixture_wav_file)
+            mixture_wav_files = []
+            clean_wav_files = []
+            for ifile in index_wav_files:
+                mixture_wav_files.append(mixture_wav_files_find[ifile])
+                clean_wav_files.append(clean_wav_files_find[ifile])
+            
+            assert len(mixture_wav_files) == len(clean_wav_files)
+            print(f"\t Original length: {len(mixture_wav_files)}")
 
-        clean_wav_files_find = sorted(clean_wav_files_find)
-        mixture_wav_files_find = sorted(mixture_wav_files_find)
+            self.mixture_wav_files = mixture_wav_files
+            self.clean_wav_files = clean_wav_files
 
-        index_wav_files = np.arange(len(mixture_wav_files_find))
-        random.shuffle(index_wav_files)
-        
-        mixture_wav_files = []
-        clean_wav_files = []
-        for ifile in index_wav_files:
-            mixture_wav_files.append(mixture_wav_files_find[ifile])
-            clean_wav_files.append(clean_wav_files_find[ifile])
-        
-        assert len(mixture_wav_files) == len(clean_wav_files)
-        print(f"\t Original length: {len(mixture_wav_files)}")
+        if not train:
+            mixture_wav_files = []
+            clean_wav_files = []
+            for scene in scenes:
+                mixture_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[2]}_CH1.wav'
+                clean_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[3]}_CH1.wav'
+                
+                mixture_wav_files.append(mixture_wav_file)
+                clean_wav_files.append(clean_wav_file)
 
-        self.length = len(mixture_wav_files)
-        self.sample_length = sample_length
         self.mixture_wav_files = mixture_wav_files
         self.clean_wav_files = clean_wav_files
+
+        self.train = train
+        self.length = len(self.mixture_wav_files)
+        self.sample_length = sample_length
         self.normalize = normalize
+        self.sample_rate = sample_rate
 
         print(f"\t Offset: {offset}")
         print(f"\t Limit: {limit}")
         print(f"\t Final length: {self.length}")
         print(f"\t Norm:  {self.normalize}")
+        print(f"\t Sample rate:  {self.sample_rate}")
             
     def __len__(self):
         return self.length
@@ -234,9 +278,16 @@ class ClarityWavDataset(Dataset):
         mixture_path = self.mixture_wav_files[item]
         clean_path = self.clean_wav_files[item]
         name = os.path.splitext(os.path.basename(clean_path))[0]
-
+        
         mixture, sr = sf.read(mixture_path, dtype="float32")
         clean, sr = sf.read(clean_path, dtype="float32")
+        original_length = mixture.shape[0]
+
+        if self.train:
+            scene = name.split("_")[0]
+            start, end = self.target_time[scene]
+            mixture = mixture[start:end, ...]
+            clean = clean[start:end, ...]
 
         mixture = np.transpose(mixture, (-1, 0))
         clean = np.transpose(clean, (-1, 0))
@@ -244,54 +295,68 @@ class ClarityWavDataset(Dataset):
         if len(mixture.shape) == 1:
             mixture = np.expand_dims(mixture, 0)
             clean = np.expand_dims(clean, 0)
-        else:
-            mixture = np.mean(mixture, axis=0, keepdims=True)
-            clean = np.mean(clean, axis=0, keepdims=True)
+        # else:
+        #     mixture = np.mean(mixture, axis=0, keepdims=True)
+        #     clean = np.mean(clean, axis=0, keepdims=True)
 
-        mixture_metadata = {
-            "min": 0,
-            "max": 0,
-            "mean": 0,
-            "std": 0,
-        }
+        curr_time = time.perf_counter()
 
-        clean_metadata = {
-            "min": 0,
-            "max": 0,
-            "mean": 0,
-            "std": 0,
-        }
+        if sr != self.sample_rate:
+            mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
+                                        output_length=None, full=False)
+            clean = julius.resample_frac(x=from_numpy(clean), old_sr=sr, new_sr=self.sample_rate,
+                                        output_length=None, full=False)
+            sr = self.sample_rate
 
-        eps = 1e-6
-        if self.normalize == "z-score":
-            mixture_metadata["mean"] = np.mean(mixture, axis=-1, keepdims=True)
-            mixture_metadata["std"] = np.std(mixture, axis=-1, keepdims=True)
-            clean_metadata["mean"] = np.mean(clean, axis=-1, keepdims=True)
-            clean_metadata["std"] = np.std(clean, axis=-1, keepdims=True)
-            mixture = (mixture-mixture_metadata["mean"])/(mixture_metadata["std"]+eps)
-            clean = (clean-clean_metadata["mean"])/(clean_metadata["std"]+eps)
-        
-        if self.normalize == "linear-scale":
-            mixture_metadata["max"] = np.max(mixture, axis=-1, keepdims=True)
-            mixture_metadata["min"] = np.min(mixture, axis=-1, keepdims=True)
-            clean_metadata["max"] = np.max(clean, axis=-1, keepdims=True)
-            clean_metadata["min"] = np.min(clean, axis=-1, keepdims=True)
-            mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
-            clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
+        if not item:
+            print("\nTime for resample: ", time.perf_counter()-curr_time)
+            
+        if not self.train:
+            return mixture, clean, original_length, name
 
-        if sr != 16000:
-            mixture = julius.resample_frac(from_numpy(mixture), sr, 16000)
-            clean = julius.resample_frac(from_numpy(clean), sr, 16000)
-            sr = 16000
+        if self.train:
+            mixture_metadata = {
+                "min": 0,
+                "max": 0,
+                "mean": 0,
+                "std": 0,
+            }
 
-        assert sr == 16000
-        assert mixture.shape == clean.shape
+            clean_metadata = {
+                "min": 0,
+                "max": 0,
+                "mean": 0,
+                "std": 0,
+            }
 
-        if self.sample_length:
-            mixture, clean = sample_fixed_length_data_aligned(mixture, clean, self.sample_length)
-        
-        if self.normalize:
+            curr_time = time.perf_counter()
+            eps = 1e-6
+            if self.normalize == "z-score":
+                mixture_metadata["mean"] = torch.mean(mixture, axis=-1, keepdims=True)
+                mixture_metadata["std"] = torch.std(mixture, axis=-1, keepdims=True)
+                clean_metadata["mean"] = torch.mean(clean, axis=-1, keepdims=True)
+                clean_metadata["std"] = torch.std(clean, axis=-1, keepdims=True)
+                mixture = (mixture-mixture_metadata["mean"])/(mixture_metadata["std"]+eps)
+                clean = (clean-clean_metadata["mean"])/(clean_metadata["std"]+eps)
+            
+            if self.normalize == "linear-scale":
+                mixture_metadata["max"] = torch.max(mixture, axis=-1, keepdims=True)
+                mixture_metadata["min"] = torch.min(mixture, axis=-1, keepdims=True)
+                clean_metadata["max"] = torch.max(clean, axis=-1, keepdims=True)
+                clean_metadata["min"] = torch.min(clean, axis=-1, keepdims=True)
+                mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
+                clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
+            
+            if not item:
+                print("\nTime for norm: ", time.perf_counter()-curr_time)
+                curr_time = time.perf_counter()
+            
+
+            assert sr == self.sample_rate
+            assert mixture.shape == clean.shape
+
+            if self.sample_length:
+                mixture, clean = sample_fixed_length_data_aligned(mixture, clean, self.sample_length)
+            
             return mixture, clean, mixture_metadata, clean_metadata, name
-        else:
-            return mixture, clean, name            
 

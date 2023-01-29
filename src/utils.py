@@ -5,16 +5,31 @@ import torch
 import numpy as np
 import typing as tp
 
-def sample_fixed_length_data_aligned(data_a, data_b, sample_length):
+def split_list(data:list, ratio: list):
+    assert (np.sum(ratio) - 1) < 1e-5, "The summation of ratio should be 1..."
+    train_ratio = ratio[0]+ratio[1]
+    index = np.arange(len(data))
+    np.random.shuffle(index)
+    data_result = [data[i] for i in index]
+    middle = int(train_ratio*len(data_result))
+
+    return data_result[:middle], data_result[middle:]
+
+
+def sample_fixed_length_data_aligned(data_a, data_b, sample_length, start=None):
     """sample with fixed length from two dataset
+
+        time = [start, end]
     """
     assert data_a.shape[-1] == data_b.shape[-1], "Inconsistent dataset length, unable to sampling"
     assert data_a.shape[-1] >= sample_length, f"len(data_a) is {data_a.shape[-1]}, sample_length is {sample_length}."
 
     length_data = data_a.shape[-1]
-
-    start = np.random.randint(length_data - sample_length + 1)
+    
+    if start is None:
+        start = np.random.randint(length_data - sample_length + 1)
     # print(f"Random crop from: {start}")
+
     end = start + sample_length
 
     return data_a[..., start:end], data_b[..., start:end]
