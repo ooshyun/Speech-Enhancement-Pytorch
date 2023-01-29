@@ -1,7 +1,11 @@
 default:
-  - _self_
-  - dset: VoiceBankDEMAND
-
+  # dset: 
+  #   name: 'VoiceBankDEMAND'
+  #   config:
+  dset: 
+    name: 'Clarity'
+    config: './recipes/icassp_2023/MLbaseline/config.yaml'
+  
 dummy:
 misc:
   num_workers: 1
@@ -52,8 +56,9 @@ model:
 
     
 dset:
-  wav: './data/VoiceBankDEMAND/DS_10283_2791'
-  split: 0.7
+  # wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
+  split: [0.8, 0.15, 0.05]
   segment: 1.024  
   use_all: False
   shift: None
@@ -68,23 +73,27 @@ dset:
   
 solver:
   root: '.'
-  epochs: 1000
+  num_workers: 10
+  epochs: 400
   batch_size: 16
+  all_steps: False
   total_steps: 1000
-  save_checkpoint_interval: 10
+  save_checkpoint_interval: 5
+  patience: 40
   resume:
   preloaded_model:
   cudnn_deterministic: True
-  validation:
-    interval: 20
+  validation: 
+    interval: 1
+    metric: 'loss' # sisdr, stoi, pesq, sisdr
+  test:
+    total_steps: 100
+    interval: 40
     num_show: 10
     metric: 'sisdr' # loss, stoi, pesq, sisdr
-    
-test:
-  num_workers: 10
-  every: 1
-  best: False
-  save: True
+  
+  # best: False
+  # save: True 
   
 name: "dcunet"
 seed: 10

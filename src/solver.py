@@ -28,13 +28,14 @@ STFT model(real, imag)
 # [TODO] Test crn, demucs, conv-tasnet, ddcrn 
 """
 import os
-import gc
 import time
 import json
 import tqdm
 import librosa
+import soundfile as sf
 import librosa.display
 import matplotlib.pyplot as plt
+
 from pathlib import Path
 from shutil import copyfile
 
@@ -42,6 +43,8 @@ import datetime
 import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+
+from .evaluate import evaluate
 
 from .metric import (
     WB_PESQ,
@@ -52,7 +55,18 @@ from .metric import (
 from .utils import (
     prepare_device,
     obj2dict,
+    load_yaml
 )
+
+try:
+    import julius
+    from omegaconf import OmegaConf
+    from recipes.icassp_2023.MLbaseline.metrics import evaluate_clarity
+    LIB_CLARITY = True
+except ModuleNotFoundError:
+    print("There's no clarity library")
+    LIB_CLARITY = False
+    
 
 # from torchmetrics import __version__ as torchmetrics_version
 
@@ -65,8 +79,6 @@ from .utils import (
 # except ImportError:
 #     from torchmetrics import SI_SDR as ScaleInvariantSignalDistortionRatio
 
-import sys
-
 class Solver(object):
     def __init__(self, 
                 config, 
@@ -74,11 +86,13 @@ class Solver(object):
                 optimizer, 
                 loss_function,
                 train_dataloader,
-                validation_dataloader
+                validation_dataloader,
+                test_dataloader,
                 ):
         
         self.train_dataloader = train_dataloader
         self.validation_dataloader = validation_dataloader
+        self.test_dataloader = test_dataloader
         self.n_gpu = torch.cuda.device_count()
         self.device = prepare_device(self.n_gpu, cudnn_deterministic=config.solver.cudnn_deterministic)
 
@@ -96,19 +110,37 @@ class Solver(object):
         self.epochs = config.solver.epochs
         self.save_checkpoint_interval = config.solver.save_checkpoint_interval
         self.validation_interval = config.solver.validation.interval
+        self.test_interval = config.solver.test.interval
         self.num_visualization = 0
-        
+
         # The following args is not in the config file, We will update it if resume is True in later.
         self.score = {"best_score": -np.inf,
                     "loss": 0,
-                    "stoi": 0,
-                    "pesq": 0,
-                    "sisdr": 0,}
+                    "loss_valid": 0,
+                    "stoi": [],
+                    "pesq": [],
+                    "sisdr": [],
+                    "haspi": [],
+                    "hasqi": [],}
 
         self.score_reference = {"loss": 0,
-                    "stoi": 0,
-                    "pesq": 0,
-                    "sisdr": 0,}
+                                "stoi": [],
+                                "pesq": [],
+                                "sisdr": []}
+
+        self.score_inference = {"loss": 0,
+                                "stoi": [],
+                                "pesq": [],
+                                "sisdr": [],
+                                "haspi": [],
+                                "hasqi": [],}
+
+        self.score_inference_reference = {"loss": 0,
+                                        "stoi": [],
+                                        "pesq": [],
+                                        "sisdr": [],
+                                        "haspi": [],
+                                        "hasqi": [],}
 
         # self.metric_torch_reference = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
         #             "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
@@ -142,10 +174,11 @@ class Solver(object):
         if config.solver.resume: self._resume_checkpoint()
         if config.solver.preloaded_model: self._preload_model() 
         
+        print(f"\n Save to {self.root_dir}")
         print("\nConfigurations are as follows: ")
-        print(  obj2dict(config))        
+        print(obj2dict(config), "\n")        
         copyfile(config.root, (self.root_dir / "config.yaml").as_posix())
-            
+        
         self._print_networks([self.model])
 
     def _resume_checkpoint(self):
@@ -170,7 +203,8 @@ class Solver(object):
         else:
             self.model.load_state_dict(checkpoint["model"])
 
-        print(f"Model checkpoint loaded.")
+        print("-"*30)
+        print(f"\tModel checkpoint loaded.")
 
     def _preload_model(self):
         """
@@ -188,7 +222,8 @@ class Solver(object):
         else:
             self.model.load_state_dict(model_checkpoint, strict=False)
 
-        print(f"Model preloaded successfully from {model_path.as_posix()}.")
+        print("-"*30)
+        print(f"\tModel preloaded successfully from {model_path.as_posix()}.")
 
     @staticmethod
     def _print_networks(nets: list):
@@ -207,7 +242,7 @@ class Solver(object):
     def _stft(self, tensor: torch.Tensor):
         batch, nchannel, nsample = tensor.size()
     
-        tensor = tensor.view(batch*nchannel, nsample)
+        tensor = tensor.reshape(batch*nchannel, nsample)
 
         tensor = torch.stft(input=tensor,
                         n_fft=self.config.model.n_fft,
@@ -224,13 +259,11 @@ class Solver(object):
         _, nfeature, nframe, ndtype = tensor.size()
         tensor = tensor.reshape(batch, nchannel, nfeature, nframe, ndtype)
         return tensor
-
         
-
     def _istft(self, tensor: torch.Tensor):
         batch, nchannel, nfeature, nframe, ndtype = tensor.size()
         tensor *= self.config.model.win_length
-        tensor = tensor.view(batch*nchannel, nfeature, nframe, ndtype)
+        tensor = tensor.reshape(batch*nchannel, nfeature, nframe, ndtype)
         tensor_complex = torch.complex(real=tensor[..., 0], imag=tensor[..., 1])
         
         tensor = torch.istft(
@@ -305,6 +338,9 @@ class Solver(object):
             return False
 
     def train(self):
+        patience = self.config.solver.patience
+        early_stopping = 0
+
         for epoch in range(1, self.epochs+1):
             print(f"============== {epoch} / {self.epochs} epoch ==============")
             print("[0 seconds] Begin training...")
@@ -319,9 +355,18 @@ class Solver(object):
             if epoch % self.validation_interval == 0:
                 print(f"[{int(time.time() - start_time)} seconds] Training is over, Validation is in progress...")
                 score = self._run_one_epoch(epoch, self.epochs, train=False)
-
                 if self._is_best(score, find_max=True):
                     self._save_checkpoint(epoch, is_best=True)
+                    early_stopping = 0
+                else:
+                    early_stopping += 1
+                
+            if epoch % self.test_interval == 0:
+                print(f"[{int(time.time() - start_time)} seconds] Training and Validation are over, Test is in progress...")
+                score = self.inference(epoch, self.epochs)            
+
+            if early_stopping > patience:
+                break
 
             print(f"[{int(time.time() - start_time)} seconds] End this epoch.")
 
@@ -342,103 +387,115 @@ class Solver(object):
         """
         loss_total = 0.
         dataloader = self.train_dataloader if train else self.validation_dataloader
-        tepoch = tqdm.tqdm(dataloader, ncols=120)
 
+        total_step = len(dataloader)
+        if (not self.config.solver.all_steps) and total_step > self.config.solver.total_steps:
+            print(f"\tTotal step({self.config.solver.total_steps}) is less then the length of dataset({total_step})...")
+            print(f"\tTrain will stop at step {self.config.solver.total_steps}!")
+            total_step = self.config.solver.total_steps
+    
+        tepoch = tqdm.tqdm(dataloader, ncols=120) # [TODO] Search Pytorch progress bar 
         for step, batch in enumerate(tepoch):
-            if len(batch) == 4:
-                mixture, clean, name, index = batch
-            else:
-                mixture, clean, mixture_metadata, clean_metadata, name, index = batch
+            tepoch.set_description(f"Epoch {epoch}")
+            
+            if step >= total_step:
+                break
+            
+            mixture, clean, mixture_metadata, clean_metadata, name, index = batch
 
             mixture = mixture.to(self.device)
             clean = clean.to(self.device)
+            
+            batch, nchannel, nsample = mixture.shape
+            mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
+            clean = torch.reshape(clean, shape=(batch*nchannel, 1, nsample))
 
             if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
                 # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
                 mixture = self._stft(mixture)
-                clean = self._stft(clean)                 
-
-            tepoch.set_description(f"Epoch {epoch}")
+                clean = self._stft(clean)    
 
             if train:
                 self.model.train()
-                enhanced: torch.Tensor = self.model(mixture)
             if not train:
                 self.model.eval()
-                enhanced: torch.Tensor = self.model(mixture)
-            assert clean.shape == mixture.shape == enhanced.shape
-
+            
+            enhanced: torch.Tensor = self.model(mixture)
             loss: torch.Tensor = self.loss_function(clean, enhanced)
             
             if train:
                 self.optimizer.zero_grad()
                 loss.backward()
-                
+                    
                 if self.config.optim.clip_grad:
                     torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     self.config.optim.clip_grad)
                 self.optimizer.step()
-
+            
             loss = loss.detach().item()
             loss_total += loss
-            
+
             if not train:
-                with torch.no_grad():
-                    mixture = mixture.detach()
-                    clean = clean.detach()
-                    enhanced = enhanced.detach()
+                if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
+                    # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
+                    mixture = self._istft(mixture)
+                    clean = self._istft(clean)    
+                    enhanced = self._istft(enhanced)    
 
-                    if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
-                        mixture = self._istft(mixture)
-                        clean = self._istft(clean)
-                        enhanced = self._istft(enhanced)
+                mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
+                clean = torch.reshape(clean, shape=(batch, nchannel, nsample))
+                enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
+                
+                mixture = mixture.detach().cpu()
+                clean = clean.detach().cpu()
+                enhanced = enhanced.detach().cpu()
 
+                start, end = 0, 0
+                for ibatch in range(len(index)):
+                    end += index[ibatch]
                     if self.config.dset.norm == "z-score":
-                        start = 0
-                        for i in range(len(index)):
-                            mixture_meta_mean, mixture_meta_std = mixture_metadata[i]["mean"], mixture_metadata[i]["std"]
-                            clean_meta_mean, clean_meta_std = clean_metadata[i]["mean"], clean_metadata[i]["std"]
-                            
-                            mixture[start:start+index[i]] = mixture[start:start+index[i]]*mixture_meta_std+mixture_meta_mean
-                            clean[start:start+index[i]] = clean[start:start+index[i]]*clean_meta_std+clean_meta_mean
-                            enhanced[start:start+index[i]] = enhanced[start:start+index[i]]*mixture_meta_std+mixture_meta_mean
-                            start += index[i]
-                    
-                    if self.config.dset.norm == "linear-scale":
-                        start = 0
-                        for i in range(len(index)):
-                            mixture_meta_min, mixture_meta_max = mixture_metadata[i]["min"], mixture_metadata[i]["max"]
-                            clean_meta_min, clean_meta_max = clean_metadata[i]["min"], clean_metadata[i]["max"]
-                            
-                            mixture[start:start+index[i]] = mixture[start:start+index[i]]*(mixture_meta_max-mixture_meta_min)+mixture_meta_min
-                            clean[start:start+index[i]] = clean[start:start+index[i]]*(clean_meta_max-clean_meta_min)+clean_meta_min
-                            enhanced[start:start+index[i]] = enhanced[start:start+index[i]]*(mixture_meta_max-mixture_meta_min)+mixture_meta_min
-                            start += index[i]
+                        mix_std, mix_mean = mixture_metadata[ibatch]["std"], mixture_metadata[ibatch]["mean"]
+                        clean_std, clean_mean = clean_metadata[ibatch]["std"], clean_metadata[ibatch]["mean"]
+                        
+                        # [TODO] print(mixture[start:end].shape, mix_mean.shape)
+                        
+                        mixture[start:end] = mixture[start:end]*mix_std+mix_mean
+                        clean[start:end] = clean[start:end]*clean_std+clean_mean
+                        enhanced[start:end] = enhanced[start:end]*mix_std+mix_mean
 
-                    mixture = mixture.cpu()
-                    clean = clean.cpu()
-                    enhanced = enhanced.cpu()
+                    if self.config.dset.norm == "linear-scale":                        
+                        mix_min, mix_max = mixture_metadata[ibatch]["min"], mixture_metadata[ibatch]["max"]
+                        clean_min, clean_max = clean_metadata[ibatch]["min"], clean_metadata[ibatch]["max"]
+                        mixture[start:end] = mixture[start:end]*(mix_max-mix_min)+mix_min
+                        clean[start:end] = clean[start:end]*(clean_max-clean_min)+clean_min
+                        enhanced[start:end] = enhanced[start:end]*(mix_max-mix_min)+mix_min
+                    start += index[ibatch]
+                                                    
+                score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean)
 
-                    self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean, epoch=epoch)
-                    self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, names=name, index=index, epoch=epoch)
+                for metric_name, metric_value in score.items():
+                    self.score[metric_name] += metric_value
+                for metric_name, metric_value in score_reference.items():
+                    self.score_reference[metric_name] += metric_value                
 
-            if train: tepoch.set_postfix(loss=loss)
-            if not train: tepoch.set_postfix(loss=loss, metric=self.score[self.config.solver.validation.metric] / (step+1))
+                tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
+            
+            if train:
+                tepoch.set_postfix(loss=loss)
 
         if train:
             self.score["loss"] = loss_total / len(dataloader)        
             self.writer.add_scalar(f"Train/Loss", self.score["loss"], epoch)
         
-        if not train:        
-            length_dataloader = len(dataloader)
+        if not train:
+            self.score["loss_valid"] = loss_total / len(dataloader)        
+            self.writer.add_scalar(f"Validation/Loss", self.score["loss"], epoch)
+
             for metric in list(self.metric.keys()):
-                self.score_reference[metric] = self.score_reference[metric] / length_dataloader
-                self.score[metric] = self.score[metric] / length_dataloader
-                
                 self.writer.add_scalars(f"Validation/{metric}", {
-                    "clean and noisy": self.score_reference[metric],
-                    "clean and enhanced": self.score[metric],
+                    "clean and noisy": np.mean(self.score_reference[metric]),
+                    "clean and enhanced": np.mean(self.score[metric]),
                 }, epoch)
 
                 # self.writer.add_scalars(f"Validation/{metric}_torch", {
@@ -448,81 +505,156 @@ class Solver(object):
 
         return self.score["loss"] if train else self.score[self.config.solver.validation.metric]
 
-    def spec_audio_visualization(self, mixture, enhanced, clean, names, index, epoch):
+    def inference(self, epoch, total_epoch):
+        loss_total = 0.
+        dataloader = self.test_dataloader
+
+        total_step = len(dataloader)
+        if (not self.config.solver.all_steps) and total_step > self.config.solver.test.total_steps:
+            print(f"\tTotal step({self.config.solver.total_steps}) is less then the length of dataset({total_step})...")
+            print(f"\tTrain will stop at step {self.config.solver.total_steps}!")
+            total_step = self.config.solver.test.total_steps
+
+        tepoch = tqdm.tqdm(dataloader, ncols=120)
+        for step, batch in enumerate(tepoch):
+            tepoch.set_description(f"Epoch {epoch}")
+            
+            if step >= total_step:
+                break
+
+            mixture, clean, origial_length, name = batch
+            batch, nchannel, nsample = mixture.shape
+            
+            mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
+            enhanced = evaluate(mixture=mixture, model=self.model, device=self.device, config=self.config)
+
+            mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
+            enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
+
+            loss: torch.Tensor = self.loss_function(clean, enhanced)
+            loss = loss.detach().item()
+            loss_total += loss
+
+            assert clean.shape == mixture.shape == enhanced.shape
+
+            mixture = mixture.detach().cpu()
+            clean = clean.detach().cpu()
+            enhanced = enhanced.detach().cpu()
+
+            score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean)
+            for metric_name, metric_value in score.items():
+                self.score_inference[metric_name] += metric_value
+            for metric_name, metric_value in score_reference.items():
+                self.score_inference_reference[metric_name] += metric_value  
+            
+            self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, name=name[0], epoch=epoch)
+            
+            if LIB_CLARITY and self.config.default.dset.name == 'Clarity':
+                self.compute_metric_clarity(mixture=mixture, enhanced=enhanced, length=origial_length, name=name[0])
+                tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]), metric2=np.mean(self.score["haspi"]))
+            else:
+                tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
+
+        self.score_inference["loss"] = loss_total / len(dataloader)  
+
+        for metric in list(self.score_inference_reference.keys()):
+            self.writer.add_scalars(f"Test/{metric}", {
+                "clean and noisy": np.mean(self.score_inference[metric]),
+                "clean and enhanced": np.mean(self.score_inference_reference[metric]),
+            }, epoch)
+
+
+    def spec_audio_visualization(self, mixture, enhanced, clean, name, epoch):
         # Visualize audio
-        if self.num_visualization > self.config.solver.validation.num_show:
+        if self.num_visualization > self.config.solver.test.num_show:
             return
 
-        start_index = 0
-        end_index = 0
-        for i, name in enumerate(names):
-            if self.num_visualization > self.config.solver.validation.num_show:
-                break
-            end_index += index[i]
-            
-            mixture_one_sequence = mixture[start_index:end_index, ...]
-            enhanced_one_sequence = enhanced[start_index:end_index, ...]
-            clean_one_sequence = clean[start_index:end_index, ...]
+        batch, nchannel, nsamples = mixture.size()
+        mixture_one_sequence = mixture.view(nchannel, batch, nsamples) 
+        enhanced_one_sequence = enhanced.view(nchannel, batch, nsamples) 
+        clean_one_sequence = clean.view(nchannel, batch, nsamples) 
 
-            batch, nchannel, nsamples = mixture_one_sequence.size()
-            mixture_one_sequence = mixture_one_sequence.view(nchannel, batch, nsamples) 
-            enhanced_one_sequence = enhanced_one_sequence.view(nchannel, batch, nsamples) 
-            clean_one_sequence = clean_one_sequence.view(nchannel, batch, nsamples) 
-
-            mixture_one_sequence = mixture_one_sequence.view(nchannel*batch*nsamples) 
-            enhanced_one_sequence = enhanced_one_sequence.view(nchannel*batch*nsamples) 
-            clean_one_sequence = clean_one_sequence.view(nchannel*batch*nsamples) 
+        mixture_one_sequence = mixture_one_sequence.view(nchannel*batch*nsamples) 
+        enhanced_one_sequence = enhanced_one_sequence.view(nchannel*batch*nsamples) 
+        clean_one_sequence = clean_one_sequence.view(nchannel*batch*nsamples) 
+    
+        self.writer.add_audio(f"Speech/{name}_mixture", mixture_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        self.writer.add_audio(f"Speech/{name}_Enhanced", enhanced_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        self.writer.add_audio(f"Speech/{name}_Clean", clean_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
         
-            self.writer.add_audio(f"Speech/{name}_mixture", mixture_one_sequence, epoch, sample_rate=16000)
-            self.writer.add_audio(f"Speech/{name}_Enhanced", enhanced_one_sequence, epoch, sample_rate=16000)
-            self.writer.add_audio(f"Speech/{name}_Clean", clean_one_sequence, epoch, sample_rate=16000)
-            
-            mixture_one_sequence = mixture_one_sequence.numpy()
-            enhanced_one_sequence = enhanced_one_sequence.numpy()
-            clean_one_sequence = clean_one_sequence.numpy()
+        mixture_one_sequence = mixture_one_sequence.numpy()
+        enhanced_one_sequence = enhanced_one_sequence.numpy()
+        clean_one_sequence = clean_one_sequence.numpy()
 
-            # Visualize waveform
-            fig, ax = plt.subplots(3, 1)
-            for j, y in enumerate([mixture_one_sequence, enhanced_one_sequence, clean_one_sequence]):
-                ax[j].set_title("mean: {:.3f}, std: {:.3f}, max: {:.3f}, min: {:.3f}".format(
-                    np.mean(y),
-                    np.std(y),
-                    np.max(y),
-                    np.min(y)
-                ))
-                librosa.display.waveshow(y, sr=16000, ax=ax[j])
-            plt.tight_layout()
-            self.writer.add_figure(f"Waveform/{name}", fig, epoch)
+        # Visualize waveform
+        fig, ax = plt.subplots(3, 1)
+        for j, y in enumerate([mixture_one_sequence, enhanced_one_sequence, clean_one_sequence]):
+            ax[j].set_title("mean: {:.3f}, std: {:.3f}, max: {:.3f}, min: {:.3f}".format(
+                np.mean(y),
+                np.std(y),
+                np.max(y),
+                np.min(y)
+            ))
+            librosa.display.waveshow(y, sr=self.config.dset.sample_rate, ax=ax[j])
+        plt.tight_layout()
+        self.writer.add_figure(f"Waveform/{name}", fig, epoch)
 
-            # Visualize spectrogram
-            mixture_mag, _ = librosa.magphase(librosa.stft(mixture_one_sequence, n_fft=320, hop_length=160, win_length=320))
-            enhanced_mag, _ = librosa.magphase(librosa.stft(enhanced_one_sequence, n_fft=320, hop_length=160, win_length=320))
-            clean_mag, _ = librosa.magphase(librosa.stft(clean_one_sequence, n_fft=320, hop_length=160, win_length=320))
+        # Visualize spectrogram
+        mixture_mag, _ = librosa.magphase(librosa.stft(mixture_one_sequence, n_fft=320, hop_length=160, win_length=320))
+        enhanced_mag, _ = librosa.magphase(librosa.stft(enhanced_one_sequence, n_fft=320, hop_length=160, win_length=320))
+        clean_mag, _ = librosa.magphase(librosa.stft(clean_one_sequence, n_fft=320, hop_length=160, win_length=320))
 
-            fig, axes = plt.subplots(3, 1, figsize=(6, 6))
-            for k, mag in enumerate([
-                mixture_mag,
-                enhanced_mag,
-                clean_mag,
-            ]):
-                axes[k].set_title(f"mean: {np.mean(mag):.3f}, "
-                                f"std: {np.std(mag):.3f}, "
-                                f"max: {np.max(mag):.3f}, "
-                                f"min: {np.min(mag):.3f}")
-                librosa.display.specshow(librosa.amplitude_to_db(mag), cmap="magma", y_axis="linear", ax=axes[k], sr=16000)
-            plt.tight_layout()
-            self.writer.add_figure(f"Spectrogram/{name}", fig, epoch)
+        fig, axes = plt.subplots(3, 1, figsize=(6, 6))
+        for k, mag in enumerate([
+            mixture_mag,
+            enhanced_mag,
+            clean_mag,
+        ]):
+            axes[k].set_title(f"mean: {np.mean(mag):.3f}, "
+                            f"std: {np.std(mag):.3f}, "
+                            f"max: {np.max(mag):.3f}, "
+                            f"min: {np.min(mag):.3f}")
+            librosa.display.specshow(librosa.amplitude_to_db(mag), cmap="magma", y_axis="linear", ax=axes[k], sr=16000)
+        plt.tight_layout()
+        self.writer.add_figure(f"Spectrogram/{name}", fig, epoch)
+        self.num_visualization += 1
 
-            start_index += index[i]
-            self.num_visualization += 1
-
-    def compute_metric(self, mixture, enhanced, clean, epoch):
+    def compute_metric(self, mixture, enhanced, clean):
         metric_name = list(self.metric.keys())
+
+        score = {name: [] for name in metric_name}
+        score_reference = {name: [] for name in metric_name}
+
         for metric in metric_name:
             # self.metric_torch_reference[metric].update(preds=mixture, target=clean)
             # self.metric_torch_estimation[metric].update(preds=enhanced, target=clean)
             score_mixture = self.metric[metric](estimation=mixture, reference=clean)
             score_enhanced = self.metric[metric](estimation=enhanced, reference=clean)
 
-            self.score_reference[metric] += score_mixture
-            self.score[metric] += score_enhanced
+            score_reference[metric].append(score_mixture)
+            score[metric].append(score_enhanced)
+        
+        return score, score_reference
+
+    def compute_metric_clarity(self, mixture, enhanced, length, name):
+        assert mixture.shape[0] == 1, "Clarity batch can only 1..."
+    
+        cfg = OmegaConf.load(self.config.default.dset.config)
+        scene = name.split("_")[0]
+
+        if not self.config.dset.sample_rate != cfg.nalr.fs:
+            enhanced_resample = julius.resample_frac(x=enhanced.clone().detach(), old_sr=self.config.dset.sample_rate, new_sr=cfg.nalr.fs,
+                                                    output_length=None, full=True)
+            mixture_resample = julius.resample_frac(x=mixture.clone().detach(), old_sr=self.config.dset.sample_rate, new_sr=cfg.nalr.fs,
+                                                    output_length=None, full=True)
+        enhanced_resample = torch.squeeze(enhanced_resample, dim=0).numpy()
+        mixture_resample = torch.squeeze(mixture_resample, dim=0).numpy()
+
+        score = evaluate_clarity(scene=scene, enhanced=enhanced_resample, sample_rate=cfg.nalr.fs, cfg=cfg)
+        score_mixture = evaluate_clarity(scene=scene, enhanced=mixture_resample, sample_rate=cfg.nalr.fs, cfg=cfg)
+
+        self.score_inference['haspi'].append(np.mean(score[0]))
+        self.score_inference['hasqi'].append(np.mean(score[1]))
+        self.score_inference_reference['haspi'].append(np.mean(score_mixture[0]))
+        self.score_inference_reference['hasqi'].append(np.mean(score_mixture[1]))
+        
