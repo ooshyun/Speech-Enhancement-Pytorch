@@ -171,7 +171,7 @@ def get_train_wav_dataset(config, name):
     return train_dataset, validation_dataset, test_dataset
 
 
-def get_dataloader(datasets: tp.List[Dataset], config, train=True):
+def get_dataloader(datasets: tp.List[Dataset], config, train=True) -> tp.List[DataLoader]:
     dataloaders = []
     for dset in datasets:
         dataloaders.append(DataLoader(dataset=dset,

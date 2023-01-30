@@ -133,8 +133,11 @@ if __name__ == "__main__":
                         channels_interval=args.channels_interval).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
-    x = torch.randn(1, length).to(args.device)
-    out = model(x[None])[0]
+    x = torch.randn(args.input_channels, length).to(args.device)
+    print(f"Input: ", x[None].shape)
+
+    out = model(x[None])
+    print(f"Out: {out.shape}")
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")
     

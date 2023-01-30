@@ -48,7 +48,10 @@ class ConvTasNet(nn.Module):
                  causal=False,
                  mask_nonlinear='relu',
                  samplerate=44100,
-                 segment_length=44100 * 2 * 4):
+                 segment_length=44100 * 2 * 4,
+                 *args,
+                 **kwargs,
+                 ):
         """
         Args:
             sources: list of sources
@@ -458,8 +461,9 @@ if __name__ == "__main__":
 
     length = int(args.sample_rate*args.segment) 
     x = torch.randn(args.input_channels, length).to(args.device)
-    out = model(x[None])[0]
-    
+    print("Input: ", x[None].shape)
+    out = model(x[None])
+    print("Output: ", out.shape)
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.5f}MB")
 

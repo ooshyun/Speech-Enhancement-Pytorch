@@ -100,7 +100,7 @@ class WavDataset(Dataset):
             mixture = np.expand_dims(mixture, 0)
             clean = np.expand_dims(clean, 0)
 
-        curr_time = time.perf_counter()
+        # curr_time = time.perf_counter()
 
         if sr != self.sample_rate:
             mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
@@ -109,8 +109,7 @@ class WavDataset(Dataset):
                                         output_length=None, full=False)
             sr = self.sample_rate
 
-        if not item:
-            print("\nTime for resample: ", time.perf_counter()-curr_time)
+        # print("\nTime for resample: ", time.perf_counter()-curr_time)
             
         if not self.train:
             return mixture, clean, original_length, name
@@ -130,7 +129,8 @@ class WavDataset(Dataset):
                 "std": 0,
             }
 
-            curr_time = time.perf_counter()
+            # curr_time = time.perf_counter()
+
             eps = 1e-6
             if self.normalize == "z-score":
                 mixture_metadata["mean"] = torch.mean(mixture, axis=-1, keepdims=True)
@@ -148,11 +148,8 @@ class WavDataset(Dataset):
                 mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
                 clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
             
-            if not item:
-                print("\nTime for norm: ", time.perf_counter()-curr_time)
-                curr_time = time.perf_counter()
+            #     print("\nTime for norm: ", time.perf_counter()-curr_time)
             
-
             assert sr == self.sample_rate
             assert mixture.shape == clean.shape
 
@@ -299,7 +296,7 @@ class ClarityWavDataset(Dataset):
         #     mixture = np.mean(mixture, axis=0, keepdims=True)
         #     clean = np.mean(clean, axis=0, keepdims=True)
 
-        curr_time = time.perf_counter()
+        # curr_time = time.perf_counter()
 
         if sr != self.sample_rate:
             mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
@@ -308,8 +305,7 @@ class ClarityWavDataset(Dataset):
                                         output_length=None, full=False)
             sr = self.sample_rate
 
-        if not item:
-            print("\nTime for resample: ", time.perf_counter()-curr_time)
+        # print("\nTime for resample: ", time.perf_counter()-curr_time)
             
         if not self.train:
             return mixture, clean, original_length, name
@@ -329,7 +325,8 @@ class ClarityWavDataset(Dataset):
                 "std": 0,
             }
 
-            curr_time = time.perf_counter()
+            # curr_time = time.perf_counter()
+            
             eps = 1e-6
             if self.normalize == "z-score":
                 mixture_metadata["mean"] = torch.mean(mixture, axis=-1, keepdims=True)
@@ -347,11 +344,8 @@ class ClarityWavDataset(Dataset):
                 mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
                 clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
             
-            if not item:
-                print("\nTime for norm: ", time.perf_counter()-curr_time)
-                curr_time = time.perf_counter()
+            # print("\nTime for norm: ", time.perf_counter()-curr_time)
             
-
             assert sr == self.sample_rate
             assert mixture.shape == clean.shape
 

@@ -302,7 +302,9 @@ class Demucs(nn.Module):
                  rescale=0.1,
                  # Metadata
                  samplerate=44100,
-                 segment=4 * 10):
+                 segment=4 * 10,
+                 *args,
+                 **kwargs):
         """
         Args:
             sources (list[str]): list of source names
@@ -523,10 +525,16 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     
-    model = get_model()(sources=[None]).to(args.device)
+    sources = ["mono"]
+    model = get_model()(sources=sources).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
-    x = torch.randn(args.input_channels, length).to(args.device)
-    out = model(x[None])[0]
+    if len(sources)==1:
+        x = torch.randn(args.input_channels, length).to(args.device)
+    else:
+        x = torch.randn(len(sources), args.input_channels, length).to(args.device)
+
+    out = model(x[None])
+    print("Out: ", out.shape)
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")

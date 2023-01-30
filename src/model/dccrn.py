@@ -16,13 +16,14 @@ class DCCRN(nn.Module):
                     win_len=400,
                     win_inc=100, 
                     fft_len=512,
-                    win_type='hanning',
+                    win_type='hann',
                     masking_mode='E',
                     use_clstm=False,
                     use_cbn = False,
                     kernel_size=5,
-                    kernel_num=[16,32,64,128,256,256]
-                ):
+                    kernel_num=[16,32,64,128,256,256],
+                    *args,
+                    **kwargs):
         '''  
             rnn_layers: the number of lstm layers in the crn,
             rnn_units: for clstm, rnn_units = real+imag
@@ -224,7 +225,8 @@ class DCCRN(nn.Module):
         out_wav = torch.squeeze(out_wav, 1)
         #out_wav = torch.tanh(out_wav)
         out_wav = torch.clamp_(out_wav,-1,1)
-        return out_spec,  out_wav
+        # return out_spec,  out_wav
+        return out_wav
 
     def get_params(self, weight_decay=0.0):
             # add L2 penalty
@@ -783,7 +785,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_fft", default=512, type=int)
     parser.add_argument("--window_length", default=400, type=int)
     parser.add_argument("--hop_length", default=256, type=int)
-    parser.add_argument("--window_type", default="hanning", type=str)
+    parser.add_argument("--window_type", default="hann", type=str)
     parser.add_argument("--dccrn_masktype", default="E", type=str)
     parser.add_argument("--dccrn_used_clstm", default="E", type=str)
     parser.add_argument("--dccrn_used_cbn", default="E", type=str)
@@ -804,8 +806,12 @@ if __name__ == "__main__":
                         kernel_num=[16,32,64,128,256,256],).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
+    print(f"Input wav length: {length}")
     x = torch.randn(1, length).to(args.device)
-    out = model(x[None])[0]
+    # out_spec,  out_wav = model(x[None])
+    # print(f"Out: spectrum. {out_spec.shape}, wav. {out_wav.shape}")
+    out_wav = model(x[None])
+    print(f"Out: wav. {out_wav.shape}")
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")
     

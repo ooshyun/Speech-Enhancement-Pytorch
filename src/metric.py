@@ -105,9 +105,10 @@ def WB_PESQ(reference, estimation, sr=16000):
                     reference_numpy[batch, ch],
                     estimation_numpy[batch, ch],
                     mode="wb",
+                    # on_error=cypesq.PesqError.RETURN_VALUES # [TODO] What is this option meaning?
                 )
             except cypesq.NoUtterancesError:
-                print("cypesq.NoUtterancesError: b'No utterances detected'")
+                # print("cypesq.NoUtterancesError: b'No utterances detected'")
                 count_error += 1
     if batch * num_channel - count_error > 0:
         pesq_batch = np.sum(pesq_batch) / (num_batch * num_channel - count_error)

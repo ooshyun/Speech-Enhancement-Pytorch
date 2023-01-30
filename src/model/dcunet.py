@@ -386,9 +386,9 @@ if __name__ == "__main__":
     nfeature = int(args.n_fft//2)+1
 
     x = torch.randn(1, nfeature, nframe, 2).to(args.device) # channel, F, T, real/imag
-
-    out = model(x[None])[0]
-    print(out.shape)
+    print("In: ", x.shape)
+    out = model(x[None])
+    print("Out: ", out.shape)
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")
     

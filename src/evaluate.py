@@ -1,10 +1,13 @@
 import torch
 import torch.nn.functional as nn
 
+
 def evaluate(mixture, model, device, config):
+    """
+        mixture = batch, channel, num samples
+    """
     with torch.no_grad():
         input_batch = mixture
-
         # mean, std
         if config.dset.norm == "z-score":
             mean_mixture = torch.mean(input_batch, dim=-1, keepdim=True)
@@ -17,16 +20,16 @@ def evaluate(mixture, model, device, config):
             input_batch = (input_batch-min_mixture) / (max_mixture - min_mixture + 1e-6)
 
         # segment 
-        stride = config.dset.win_length
-        num_feature = int(config.dset.sample_rate*config.dset.segment)
+        stride = config.model.win_length
+        num_feature = int(config.dset.sample_rate*config.model.segment)
         input_batch = _prepare_input_wav_zero_filled(input_batch, num_feature, stride=stride)
 
+        # merge segment, batch
         num_segment, batch, nchannel, nsample = input_batch.shape
         input_batch = input_batch.reshape(num_segment*batch, nchannel, nsample)
-        
         if config.model.name in ("mel-rnn", "dcunet", "crn"):
             input_batch = _stft(input_batch, config)
-        
+
         # model
         if model:
             model.eval()
@@ -35,26 +38,30 @@ def evaluate(mixture, model, device, config):
             # 2.37 GiB free; 7.00 GiB reserved in total by PyTorch)            
             output = []
             segment = int(input_batch.shape[0]//2)
+            
             input_batch_segment = input_batch[:segment].to(device)
             output_batch_segment = model(input_batch_segment)
             output.append(output_batch_segment)
+            
             input_batch_segment = input_batch[segment:].to(device)
             output_batch_segment = model(input_batch_segment)
             output.append(output_batch_segment)
-            output = torch.stack(output, dim=0)
+            
+            # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
+            try: 
+                output = torch.concat(output, dim=0)
+            except AttributeError:
+                output = torch.cat(output, dim=0)
+        
             del input_batch_segment, output_batch_segment
-            tmpshape = list(output.shape)
-            tmpshape = [tmpshape[0]*tmpshape[1]] + tmpshape[2:]
-            output = torch.reshape(output, tmpshape)
         else:
             output = input_batch
 
         if config.model.name in ("mel-rnn", "dcunet", "crn"):
             output = _istft(output, config)
-
+        
         output = output.reshape(num_segment, batch, nchannel, nsample)
 
-        #
         shape = list(mixture.shape)
         shape = shape[:-1] + [num_feature + stride*(output.shape[0]-1)]
         enhanced = torch.zeros(size=shape, dtype=mixture.dtype)
@@ -72,10 +79,6 @@ def evaluate(mixture, model, device, config):
             enhanced = enhanced*(max_mixture-min_mixture+1e-6) + min_mixture
 
     return enhanced
-
-
-
-
 
 
 def _stft(tensor: torch.Tensor, config):

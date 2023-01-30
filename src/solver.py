@@ -1,5 +1,5 @@
 """
-Most of parts are from https://github.com/haoxiangsnr/Wave-U-Net-for-Speech-Enhancement.git
+Most of parts of this codes are from https://github.com/haoxiangsnr/Wave-U-Net-for-Speech-Enhancement.git
 
 Model list
 ----------
@@ -22,10 +22,12 @@ STFT model(real, imag)
 ----------
     - mel-rnn
     - dcunet
-    - crn, nfeature 161, nfft 322
+    - crn
 
-# wav-unet, dcunet, mel-rnn, 
-# [TODO] Test crn, demucs, conv-tasnet, ddcrn 
+STFT model(amplitude)
+----------
+    - crn
+
 """
 import os
 import time
@@ -40,10 +42,12 @@ from pathlib import Path
 from shutil import copyfile
 
 import datetime
-import torch
 import numpy as np
-from torch.utils.tensorboard import SummaryWriter
 
+import torch
+import torch.autograd
+
+from torch.utils.tensorboard import SummaryWriter
 from .evaluate import evaluate
 
 from .metric import (
@@ -66,30 +70,27 @@ try:
 except ModuleNotFoundError:
     print("There's no clarity library")
     LIB_CLARITY = False
-    
 
-# from torchmetrics import __version__ as torchmetrics_version
-
-# try:
-#     from torchmetrics import ScaleInvariantSignalDistortionRatio
-#     from torchmetrics.audio import (
-#     ShortTimeObjectiveIntelligibility,
-#     PerceptualEvaluationSpeechQuality,
-# )
-# except ImportError:
-#     from torchmetrics import SI_SDR as ScaleInvariantSignalDistortionRatio
+try:
+    from torchmetrics import ScaleInvariantSignalDistortionRatio
+    from torchmetrics.audio import (
+    ShortTimeObjectiveIntelligibility,
+    PerceptualEvaluationSpeechQuality,
+)
+    LIB_TORCH_METRIC = True
+except ImportError:
+    LIB_TORCH_METRIC = False
 
 class Solver(object):
     def __init__(self, 
                 config, 
                 model, 
-                optimizer, 
-                loss_function,
-                train_dataloader,
-                validation_dataloader,
-                test_dataloader,
+                optimizer=None, 
+                loss_function=None,
+                train_dataloader=None,
+                validation_dataloader=None,
+                test_dataloader=None,
                 ):
-        
         self.train_dataloader = train_dataloader
         self.validation_dataloader = validation_dataloader
         self.test_dataloader = test_dataloader
@@ -142,14 +143,15 @@ class Solver(object):
                                         "haspi": [],
                                         "hasqi": [],}
 
-        # self.metric_torch_reference = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
-        #             "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
-        #             "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
-        
-        # self.metric_torch_estimation = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
-        #             "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
-        #             "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
-        
+        if LIB_TORCH_METRIC:
+            self.metric_torch_reference = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
+                        "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
+                        "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
+            
+            self.metric_torch_estimation = {"stoi": ShortTimeObjectiveIntelligibility(fs=config.model.sample_rate, extended=True),
+                        "pesq": PerceptualEvaluationSpeechQuality(fs=config.model.sample_rate, mode = "wb"),
+                        "sisdr": ScaleInvariantSignalDistortionRatio(zero_mean=False), }
+            
 
         self.metric = {"stoi": STOI,
                     "pesq": WB_PESQ,
@@ -196,7 +198,7 @@ class Solver(object):
 
         # self.start_epoch = checkpoint["epoch"] + 1
         self.best_score = checkpoint["best_score"]
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        if self.optimizer: self.optimizer.load_state_dict(checkpoint["optimizer"])
 
         if isinstance(self.model, torch.nn.DataParallel):
             self.model.module.load_state_dict(checkpoint["model"])
@@ -204,7 +206,7 @@ class Solver(object):
             self.model.load_state_dict(checkpoint["model"])
 
         print("-"*30)
-        print(f"\tModel checkpoint loaded.")
+        print(f"\tModel checkpoint loaded, {latest_model_path.as_posix()}")
 
     def _preload_model(self):
         """
@@ -281,7 +283,6 @@ class Solver(object):
         _, nsample = tensor.size()
         tensor = tensor.reshape(batch, nchannel, nsample)
         return tensor
-
 
     def _save_checkpoint(self, epoch, is_best=False):
         """Save checkpoint to <root_dir>/checkpoints directory, which contains:
@@ -407,81 +408,103 @@ class Solver(object):
             clean = clean.to(self.device)
             
             batch, nchannel, nsample = mixture.shape
-            mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
-            clean = torch.reshape(clean, shape=(batch*nchannel, 1, nsample))
+
+            # mono channel to stereo for source separation models
+            if self.config.model.name in ("demucs", "conv-tasnet") and nchannel == 1:
+                try:
+                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
+                    clean = torch.cat(tensors=[clean, clean], dim=1)
+                except AttributeError:
+                    # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
+                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
+                    clean = torch.cat(tensors=[clean, clean], dim=1)
+
+            # if not source separation models, merge batch and channels
+            if self.config.model.name not in ("demucs", "conv-tasnet"):
+                mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
+                clean = torch.reshape(clean, shape=(batch*nchannel, 1, nsample))
 
             if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
                 # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
                 mixture = self._stft(mixture)
-                clean = self._stft(clean)    
+                clean = self._stft(clean)
 
             if train:
                 self.model.train()
             if not train:
                 self.model.eval()
             
+            # with torch.autograd.detect_anomaly(): # figuring out nan grads
             enhanced: torch.Tensor = self.model(mixture)
+
+            # source separation models give out.shape = batch, sources, channels, features, currently sources is 1
+            if self.config.model.name in ("demucs", "conv-tasnet"):
+                enhanced = torch.squeeze(enhanced, dim=1)
+
             loss: torch.Tensor = self.loss_function(clean, enhanced)
             
             if train:
                 self.optimizer.zero_grad()
                 loss.backward()
-                    
+
                 if self.config.optim.clip_grad:
                     torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     self.config.optim.clip_grad)
+
                 self.optimizer.step()
-            
+
             loss = loss.detach().item()
             loss_total += loss
 
             if not train:
-                if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
-                    # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
-                    mixture = self._istft(mixture)
-                    clean = self._istft(clean)    
-                    enhanced = self._istft(enhanced)    
+                # # skip the metric for training speed
+                # if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
+                #     # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
+                #     mixture = self._istft(mixture)
+                #     clean = self._istft(clean)    
+                #     enhanced = self._istft(enhanced)    
 
-                mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
-                clean = torch.reshape(clean, shape=(batch, nchannel, nsample))
-                enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
-                
-                mixture = mixture.detach().cpu()
-                clean = clean.detach().cpu()
-                enhanced = enhanced.detach().cpu()
+                # if self.config.model.name not in ("demucs", "conv-tasnet"):
+                #     mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
+                #     clean = torch.reshape(clean, shape=(batch, nchannel, nsample))
+                #     enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
+                    
+                # mixture = mixture.detach().cpu()
+                # clean = clean.detach().cpu()
+                # enhanced = enhanced.detach().cpu()
 
-                start, end = 0, 0
-                for ibatch in range(len(index)):
-                    end += index[ibatch]
-                    if self.config.dset.norm == "z-score":
-                        mix_std, mix_mean = mixture_metadata[ibatch]["std"], mixture_metadata[ibatch]["mean"]
-                        clean_std, clean_mean = clean_metadata[ibatch]["std"], clean_metadata[ibatch]["mean"]
-                        
-                        # [TODO] print(mixture[start:end].shape, mix_mean.shape)
-                        
-                        mixture[start:end] = mixture[start:end]*mix_std+mix_mean
-                        clean[start:end] = clean[start:end]*clean_std+clean_mean
-                        enhanced[start:end] = enhanced[start:end]*mix_std+mix_mean
+                # start, end = 0, 0
+                # for ibatch in range(len(index)):
+                #     end += index[ibatch]
+                #     if self.config.dset.norm == "z-score":
+                #         mix_std, mix_mean = mixture_metadata[ibatch]["std"], mixture_metadata[ibatch]["mean"]
+                #         clean_std, clean_mean = clean_metadata[ibatch]["std"], clean_metadata[ibatch]["mean"]
+                                                
+                #         mixture[start:end] = mixture[start:end]*mix_std+mix_mean
+                #         clean[start:end] = clean[start:end]*clean_std+clean_mean
+                #         enhanced[start:end] = enhanced[start:end]*mix_std+mix_mean
 
-                    if self.config.dset.norm == "linear-scale":                        
-                        mix_min, mix_max = mixture_metadata[ibatch]["min"], mixture_metadata[ibatch]["max"]
-                        clean_min, clean_max = clean_metadata[ibatch]["min"], clean_metadata[ibatch]["max"]
-                        mixture[start:end] = mixture[start:end]*(mix_max-mix_min)+mix_min
-                        clean[start:end] = clean[start:end]*(clean_max-clean_min)+clean_min
-                        enhanced[start:end] = enhanced[start:end]*(mix_max-mix_min)+mix_min
-                    start += index[ibatch]
+                #     if self.config.dset.norm == "linear-scale":                        
+                #         mix_min, mix_max = mixture_metadata[ibatch]["min"], mixture_metadata[ibatch]["max"]
+                #         clean_min, clean_max = clean_metadata[ibatch]["min"], clean_metadata[ibatch]["max"]
+                #         mixture[start:end] = mixture[start:end]*(mix_max-mix_min)+mix_min
+                #         clean[start:end] = clean[start:end]*(clean_max-clean_min)+clean_min
+                #         enhanced[start:end] = enhanced[start:end]*(mix_max-mix_min)+mix_min
+                #     start += index[ibatch]
                                                     
-                score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean)
+                # score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean)
 
-                for metric_name, metric_value in score.items():
-                    self.score[metric_name] += metric_value
-                for metric_name, metric_value in score_reference.items():
-                    self.score_reference[metric_name] += metric_value                
+                # for metric_name, metric_value in score.items():
+                #     self.score[metric_name] += metric_value
+                # for metric_name, metric_value in score_reference.items():
+                #     self.score_reference[metric_name] += metric_value                
 
-                tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
-            
+                # tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
+                self.writer.add_scalar(f"Validation/Loss_step", loss, epoch)
+                tepoch.set_postfix(loss=loss)
             if train:
+                self.writer.add_scalar(f"Train/Loss_step", loss, epoch)
                 tepoch.set_postfix(loss=loss)
 
         if train:
@@ -492,16 +515,16 @@ class Solver(object):
             self.score["loss_valid"] = loss_total / len(dataloader)        
             self.writer.add_scalar(f"Validation/Loss", self.score["loss"], epoch)
 
-            for metric in list(self.metric.keys()):
-                self.writer.add_scalars(f"Validation/{metric}", {
-                    "clean and noisy": np.mean(self.score_reference[metric]),
-                    "clean and enhanced": np.mean(self.score[metric]),
-                }, epoch)
+            # for metric in list(self.metric.keys()):
+            #     self.writer.add_scalars(f"Validation/{metric}", {
+            #         "clean and noisy": np.mean(self.score_reference[metric]),
+            #         "clean and enhanced": np.mean(self.score[metric]),
+            #     }, epoch)
 
-                # self.writer.add_scalars(f"Validation/{metric}_torch", {
-                #     "clean and noisy": self.metric_torch_reference[metric].compute(),
-                #     "clean and enhanced": self.metric_torch_estimation[metric].compute(),
-                # }, epoch)
+            #     self.writer.add_scalars(f"Validation/{metric}_torch", {
+            #         "clean and noisy": self.metric_torch_reference[metric].compute(),
+            #         "clean and enhanced": self.metric_torch_estimation[metric].compute(),
+            #     }, epoch)
 
         return self.score["loss"] if train else self.score[self.config.solver.validation.metric]
 
@@ -524,45 +547,59 @@ class Solver(object):
 
             mixture, clean, origial_length, name = batch
             batch, nchannel, nsample = mixture.shape
-            
-            mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
+
+            if self.config.model.name in ("demucs", "conv-tasnet") and nchannel == 1:
+                try:
+                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
+                    clean = torch.cat(tensors=[clean, clean], dim=1)
+                except AttributeError:
+                    # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
+                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
+                    clean = torch.cat(tensors=[clean, clean], dim=1)
+
+            if self.config.model.name not in ("demucs", "conv-tasnet"):
+                mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
+
             enhanced = evaluate(mixture=mixture, model=self.model, device=self.device, config=self.config)
 
-            mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
-            enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
+            if self.config.model.name in ("demucs", "conv-tasnet"):
+                enhanced = torch.squeeze(enhanced, dim=1)
+
+            if self.config.model.name not in ("demucs", "conv-tasnet"):
+                mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
+                enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
 
             loss: torch.Tensor = self.loss_function(clean, enhanced)
             loss = loss.detach().item()
             loss_total += loss
-
+            
             assert clean.shape == mixture.shape == enhanced.shape
 
             mixture = mixture.detach().cpu()
             clean = clean.detach().cpu()
             enhanced = enhanced.detach().cpu()
-
             score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean)
+
             for metric_name, metric_value in score.items():
-                self.score_inference[metric_name] += metric_value
+                self.score_inference[metric_name] += metric_value    
             for metric_name, metric_value in score_reference.items():
                 self.score_inference_reference[metric_name] += metric_value  
             
-            self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, name=name[0], epoch=epoch)
-            
+            self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, name=name[0], epoch=epoch)            
+
             if LIB_CLARITY and self.config.default.dset.name == 'Clarity':
                 self.compute_metric_clarity(mixture=mixture, enhanced=enhanced, length=origial_length, name=name[0])
-                tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]), metric2=np.mean(self.score["haspi"]))
+                tepoch.set_postfix(loss=loss, metric=np.mean(self.score_inference[self.config.solver.test.metric]), metric2=np.mean(self.score_inference["haspi"]))
             else:
-                tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
+                tepoch.set_postfix(loss=loss, metric=np.mean(self.score_inference[self.config.solver.test.metric]))
 
         self.score_inference["loss"] = loss_total / len(dataloader)  
-
+        
         for metric in list(self.score_inference_reference.keys()):
             self.writer.add_scalars(f"Test/{metric}", {
                 "clean and noisy": np.mean(self.score_inference[metric]),
                 "clean and enhanced": np.mean(self.score_inference_reference[metric]),
             }, epoch)
-
 
     def spec_audio_visualization(self, mixture, enhanced, clean, name, epoch):
         # Visualize audio
@@ -619,6 +656,8 @@ class Solver(object):
         self.writer.add_figure(f"Spectrogram/{name}", fig, epoch)
         self.num_visualization += 1
 
+        del fig, axes
+
     def compute_metric(self, mixture, enhanced, clean):
         metric_name = list(self.metric.keys())
 
@@ -626,14 +665,16 @@ class Solver(object):
         score_reference = {name: [] for name in metric_name}
 
         for metric in metric_name:
-            # self.metric_torch_reference[metric].update(preds=mixture, target=clean)
-            # self.metric_torch_estimation[metric].update(preds=enhanced, target=clean)
             score_mixture = self.metric[metric](estimation=mixture, reference=clean)
             score_enhanced = self.metric[metric](estimation=enhanced, reference=clean)
 
             score_reference[metric].append(score_mixture)
             score[metric].append(score_enhanced)
-        
+            
+            if LIB_TORCH_METRIC:
+                self.metric_torch_reference[metric].update(preds=mixture, target=clean)
+                self.metric_torch_estimation[metric].update(preds=enhanced, target=clean)
+
         return score, score_reference
 
     def compute_metric_clarity(self, mixture, enhanced, length, name):
@@ -642,11 +683,14 @@ class Solver(object):
         cfg = OmegaConf.load(self.config.default.dset.config)
         scene = name.split("_")[0]
 
-        if not self.config.dset.sample_rate != cfg.nalr.fs:
-            enhanced_resample = julius.resample_frac(x=enhanced.clone().detach(), old_sr=self.config.dset.sample_rate, new_sr=cfg.nalr.fs,
+        enhanced_resample = enhanced.clone().detach()
+        mixture_resample = mixture.clone().detach()
+        if self.config.dset.sample_rate != cfg.nalr.fs:
+            enhanced_resample = julius.resample_frac(x=enhanced_resample, old_sr=self.config.dset.sample_rate, new_sr=cfg.nalr.fs,
                                                     output_length=None, full=True)
-            mixture_resample = julius.resample_frac(x=mixture.clone().detach(), old_sr=self.config.dset.sample_rate, new_sr=cfg.nalr.fs,
+            mixture_resample = julius.resample_frac(x=mixture_resample, old_sr=self.config.dset.sample_rate, new_sr=cfg.nalr.fs,
                                                     output_length=None, full=True)
+            
         enhanced_resample = torch.squeeze(enhanced_resample, dim=0).numpy()
         mixture_resample = torch.squeeze(mixture_resample, dim=0).numpy()
 
