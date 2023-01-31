@@ -56,6 +56,7 @@ class DCUnet(nn.Module):
                  model_complexity=45,
                  model_depth=20,
                  padding_mode="zeros",
+                 masking_mode="E",
                  *args,
                  **kwargs):
         super().__init__()
@@ -93,11 +94,15 @@ class DCUnet(nn.Module):
         self.add_module("linear", linear)
         self.data_type = data_type
         self.padding_mode = padding_mode
+        self.masking_mode = masking_mode
 
         self.decoders = nn.ModuleList(self.decoders)
         self.encoders = nn.ModuleList(self.encoders)
 
     def forward(self, x):
+        real = x[..., 0]
+        imag = x[..., 1]
+
         x = x.transpose(2, 3) # channel, F, T, real/imag -> # channel, T, F, real/imag
         if self.data_type:
             x = x
@@ -125,7 +130,37 @@ class DCUnet(nn.Module):
         mask = self.linear(p)
         mask = torch.tanh(mask)
         mask = mask.transpose(2, 3) # channel, T, F, real/imag -> # channel, F, T, real/imag
-        return mask
+        
+        # masking method
+        # https://github.com/huyanxin/DeepComplexCRN
+        x_mag = torch.sqrt(real**2+imag**2+1e-8)
+        x_phase = torch.atan2(imag, real)
+
+        mask_real = mask[..., 0]
+        mask_imag = mask[..., 1] 
+        
+        if self.masking_mode == 'E' :
+            mask_mags = (mask_real**2+mask_imag**2)**0.5
+            real_phase = mask_real/(mask_mags+1e-8)
+            imag_phase = mask_imag/(mask_mags+1e-8)
+            mask_phase = torch.atan2(
+                            imag_phase,
+                            real_phase
+                        ) 
+            #mask_mags = torch.clamp_(mask_mags,0,100) 
+            mask_mags = torch.tanh(mask_mags)
+            est_mags = mask_mags*x_mag 
+            est_phase = x_phase + mask_phase
+            real = est_mags*torch.cos(est_phase)
+            imag = est_mags*torch.sin(est_phase) 
+        elif self.masking_mode == 'C':
+            real,imag = real*mask_real-imag*mask_imag, real*mask_imag+imag*mask_real
+        elif self.masking_mode == 'R':
+            real, imag = real*mask_real, imag*mask_imag 
+        
+        out = torch.stack(tensors=[real, imag], dim=-1) 
+
+        return out
 
     def set_size(self, model_complexity, model_depth=20, input_channels=1):
         if model_depth == 10:

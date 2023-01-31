@@ -37,7 +37,7 @@ class ModelSanityCheck(unittest.TestCase):
                      'conv-tasnet', # O, gpu 19421MiB
                      'crn', # X, out nan
                      ]
-        index_model = 5
+        index_model = 2
 
         config.model.name = model_list[index_model]
                      

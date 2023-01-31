@@ -30,7 +30,7 @@ optim:
 model:
   # wav-unet, dcunet, demucs, conv-tasnet,
   # [X] mel-rnn, crn, dccrn
-  name: 'conv-tasnet'
+  name: 'dcunet'
   input_channels: 1
   segment: 1.024
   sample_rate: 16000
@@ -51,12 +51,12 @@ model:
   data_type: True 
   padding_mode: 'zeros'
   # Unet
-  unet_nlayers: 24
-  channels_interval: 12
+  unet_nlayers: 12
+  channels_interval: 24
   # CRN
-  n_fft: 320
-  hop_length: 160
-  win_length: 320
+  # n_fft: 320
+  # hop_length: 160
+  # win_length: 320
   # Demucs
   sources: [None]
 
