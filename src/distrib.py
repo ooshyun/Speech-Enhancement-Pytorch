@@ -16,6 +16,7 @@ from torch.nn.functional import pad
 import typing as tp
 from .dataset import WavDataset, ClarityWavDataset
 from .utils import find_folder, obj2dict, split_list
+from .loss import loss_sisdr
 
 from .model.conv_tasnet import ConvTasNet
 from .model.crn import CRN
@@ -225,6 +226,8 @@ def get_loss_function(config):
         loss_function = torch.nn.functional.l1_loss
     elif config.loss == "mse":
         loss_function = torch.nn.functional.mse_loss
+    elif config.loss == "si-sdr":
+        loss_function = loss_sisdr
     # elif config.loss == 'psa':
     #     from loss import phase_sensitive_approximate_loss
     #     loss_function = phase_sensitive_approximate_loss

@@ -437,11 +437,15 @@ class Solver(object):
             # with torch.autograd.detect_anomaly(): # figuring out nan grads
             enhanced: torch.Tensor = self.model(mixture)
 
-            # source separation models give out.shape = batch, sources, channels, features, currently sources is 1
-            if self.config.model.name in ("demucs", "conv-tasnet"):
+            # source separation models give out.shape = batch, sources, channels, features, 
+            # currently sources is 1 and channels 2
+            if self.config.model.name in ("demucs", "conv-tasnet") and enhanced.shape[1] == 1:
                 enhanced = torch.squeeze(enhanced, dim=1)
 
-            loss: torch.Tensor = self.loss_function(clean, enhanced)
+            if self.config.model.name in ("dccrn"):
+                loss = self.model.loss(enhanced, clean, loss_mode='SI-SNR')
+            else:
+                loss: torch.Tensor = self.loss_function(clean, enhanced)
             
             if train:
                 self.optimizer.zero_grad()
@@ -501,10 +505,10 @@ class Solver(object):
                 #     self.score_reference[metric_name] += metric_value                
 
                 # tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
-                self.writer.add_scalar(f"Validation/Loss_step", loss, epoch)
+                self.writer.add_scalar(f"Validation/Loss_step", loss, (epoch+1)*total_step+step)
                 tepoch.set_postfix(loss=loss)
             if train:
-                self.writer.add_scalar(f"Train/Loss_step", loss, epoch)
+                self.writer.add_scalar(f"Train/Loss_step", loss, (epoch+1)*total_step+step)
                 tepoch.set_postfix(loss=loss)
 
         if train:

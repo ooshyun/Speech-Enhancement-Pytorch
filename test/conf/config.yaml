@@ -20,17 +20,18 @@ optim:
   lr: 0.0003
   beta1: 0.9
   beta2: 0.999
-  loss: 'l1'
+  # loss: 'l1'
   # loss: 'mse'
   # loss: 'psa'
   # loss: 'psa-bose'
   # loss: 'ideal-mag'
+  loss: 'si-sdr'
   clip_grad: False
 
 model:
-  # wav-unet, dcunet, demucs, conv-tasnet,
-  # [X] mel-rnn, crn, dccrn
-  name: 'conv-tasnet'
+  # wav-unet, dcunet, demucs,
+  # [X] mel-rnn, crn, dccrn, conv-tasnet
+  name: 'dccrn'
   input_channels: 1
   segment: 1.024
   sample_rate: 16000

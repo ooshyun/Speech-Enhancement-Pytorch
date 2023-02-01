@@ -4,7 +4,7 @@ default:
   #   config:
   dset: 
     name: 'Clarity'
-    config: './recipes/icassp_2023/MLbaseline/config.yaml'
+    config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
   
 dummy:
 misc:
@@ -21,16 +21,17 @@ optim:
   beta1: 0.9
   beta2: 0.999
   # loss: 'l1'
-  loss: 'mse'
+  # loss: 'mse'
   # loss: 'psa'
   # loss: 'psa-bose'
   # loss: 'ideal-mag'
+  loss: 'si-sdr'
   clip_grad: False
 
 model:
-  # wav-unet, dcunet, demucs, conv-tasnet,
-  # [X] mel-rnn, crn, dccrn
-  name: 'dcunet'
+  # wav-unet, dcunet, demucs, dccrn
+  # [X] mel-rnn, crn, conv-tasnet
+  name: 'wav-unet'
   input_channels: 1
   segment: 1.024
   sample_rate: 16000
@@ -59,7 +60,11 @@ model:
   # win_length: 320
   # Demucs
   sources: [None]
-
+  # DCCRN 
+  # default [16,32,64,128,256,256] 
+  # paper [32,64,128,128,256,256]
+  kernel_num: [16,32,64,128,256,256]
+  
     
 dset:
   # wav: './data/VoiceBankDEMAND/DS_10283_2791'
@@ -82,7 +87,7 @@ solver:
   total_steps: 2000
   save_checkpoint_interval: 5
   patience: 40
-  resume:
+  resume: './result/wav-unet/20230131-102052'
   preloaded_model:
   cudnn_deterministic: True
   validation: 

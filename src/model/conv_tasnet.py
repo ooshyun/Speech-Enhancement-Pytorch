@@ -34,20 +34,20 @@ def overlap_and_add(signal, frame_step):
 
 
 class ConvTasNet(nn.Module):
-    def __init__(self,
+    def __init__(self,  # default
                  sources,
-                 N=256,
-                 L=20,
-                 B=256,
-                 H=512,
+                 N=128, # 256
+                 L=40, # 20
+                 B=128,
+                 H=256,
                  P=3,
-                 X=8,
-                 R=4,
+                 X=7,
+                 R=2,
                  audio_channels=2,
                  norm_type="gLN",
                  causal=False,
                  mask_nonlinear='relu',
-                 samplerate=44100,
+                 sample_rate=44100,
                  segment_length=44100 * 2 * 4,
                  *args,
                  **kwargs,
@@ -57,7 +57,7 @@ class ConvTasNet(nn.Module):
             sources: list of sources
             N: Number of filters in autoencoder
             L: Length of the filters (in samples)
-            B: Number of channels in bottleneck 1 × 1-conv block
+            B: Number of channels in bottleneck 1 * 1-conv block
             H: Number of channels in convolutional blocks
             P: Kernel size in convolutional blocks
             X: Number of convolutional blocks in each repeat
@@ -75,7 +75,7 @@ class ConvTasNet(nn.Module):
         self.causal = causal
         self.mask_nonlinear = mask_nonlinear
         self.audio_channels = audio_channels
-        self.samplerate = samplerate
+        self.sample_rate = sample_rate
         self.segment_length = segment_length
         # Components
         self.encoder = Encoder(L, N, audio_channels)
@@ -448,7 +448,8 @@ if __name__ == "__main__":
         "denoiser.demucs",
         description="Benchmark the streaming Demucs implementation, "
                     "as well as checking the delta with the offline implementation.")
-    parser.add_argument("--sample_rate", default=44100, type=int)
+    parser.add_argument("--num_sources", default=1, type=int)
+    parser.add_argument("--sample_rate", default=16000, type=int)
     parser.add_argument("--segment", default=1, type=float)
     parser.add_argument("--input_channels", default=2, type=int)
     parser.add_argument("--depth", default=12, type=int)
@@ -457,7 +458,10 @@ if __name__ == "__main__":
         
     args = parser.parse_args()
     
-    model = get_model()([None], N, L, B, H, P, X, R, C, norm_type=norm_type).to(args.device)
+    model = get_model()([None]*args.num_sources, N, L, B, H, P, X, R, # C(input_channels)
+                        audio_channels=args.input_channels,
+                        sample_rate=args.sample_rate,
+                        norm_type=norm_type).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
     x = torch.randn(args.input_channels, length).to(args.device)
