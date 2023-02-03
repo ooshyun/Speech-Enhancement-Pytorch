@@ -15,8 +15,8 @@ def evaluate(mixture, model, device, config):
             input_batch = (input_batch-mean_mixture) / (std_mixture + 1e-6)
         
         if config.dset.norm == "linear-scale":
-            max_mixture = torch.max(input_batch, dim=-1, keepdim=True)
-            min_mixture = torch.min(input_batch, dim=-1, keepdim=True)
+            max_mixture = torch.max(input_batch, dim=-1, keepdim=True).values
+            min_mixture = torch.min(input_batch, dim=-1, keepdim=True).values
             input_batch = (input_batch-min_mixture) / (max_mixture - min_mixture + 1e-6)
 
         # segment 
@@ -27,7 +27,7 @@ def evaluate(mixture, model, device, config):
         # merge segment, batch
         num_segment, batch, nchannel, nsample = input_batch.shape
         input_batch = input_batch.reshape(num_segment*batch, nchannel, nsample)
-        if config.model.name in ("mel-rnn", "dcunet", "crn"):
+        if config.model.name in ("mel-rnn", "dcunet", "crn", "dnn", "unet"):
             input_batch = _stft(input_batch, config)
 
         # model
@@ -57,7 +57,7 @@ def evaluate(mixture, model, device, config):
         else:
             output = input_batch
 
-        if config.model.name in ("mel-rnn", "dcunet", "crn"):
+        if config.model.name in ("mel-rnn", "dcunet", "crn", "dnn", "unet"):
             output = _istft(output, config)
         
         output = output.reshape(num_segment, batch, nchannel, nsample)

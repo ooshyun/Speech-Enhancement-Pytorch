@@ -21,17 +21,17 @@ optim:
   beta1: 0.9
   beta2: 0.999
   # loss: 'l1'
-  # loss: 'mse'
+  loss: 'mse'
   # loss: 'psa'
   # loss: 'psa-bose'
   # loss: 'ideal-mag'
-  loss: 'si-sdr'
+  # loss: 'si-sdr'
   clip_grad: False
 
 model:
-  # wav-unet, dcunet, demucs,
+  # wav-unet, dcunet, demucs, unet
   # [X] mel-rnn, crn, dccrn, conv-tasnet
-  name: 'dccrn'
+  name: 'unet'
   input_channels: 1
   segment: 1.024
   sample_rate: 16000
@@ -39,25 +39,45 @@ model:
   hop_length: 256
   win_length: 512
   center: True
+  
+  # DNN
+  n_layers: 4 
+  hidden_layer: 1024
+  bias: True
+  activation: "leaky-relu"
+  drop_out: 0.5
+  dnn_method: "mask"
+  dnn_ema: True
+
+  # Unet(CNN)
+  unet_channels: 1
+  unet_layer: 4
+  bilinear: False
+
   # Mel-RNN
   rnn_type: 'rnn'
-  rnn_layer: 256
-  n_mels: 128
+  rnn_hidden: 256
+  rnn_layer: 2
+  n_mels: 0 # 128
   f_min: 125
   f_max: 8000
   ema: True
+  
   # DCUnet
   model_complexity: 45
   model_depth: 10 
   data_type: True 
   padding_mode: 'zeros'
+  
   # Unet
   unet_nlayers: 12
   channels_interval: 24
+  
   # CRN
   # n_fft: 320
   # hop_length: 160
   # win_length: 320
+  
   # Demucs
   sources: [None]
     
@@ -74,7 +94,7 @@ dset:
   channels: 1
   
 solver:
-  root: '.'
+  root: './test'
   num_workers: 10
   epochs: 1
   batch_size: 16

@@ -24,34 +24,36 @@ class MelRNN(nn.Module):
         self.hop_length = hop_length
         self.n_mels = n_mels
         self.sample_rate = sample_rate
-        self.rnn_layer = rnn_layer
         self.f_min = f_min
         self.f_max = f_max
         
         self.amplitude = Amplitude()
 
-        self.mel = transforms.MelScale(n_mels=n_mels,
-                                                sample_rate=sample_rate, 
-                                                f_min=f_min,
-                                                f_max=f_max,
-                                                n_stft=int(n_fft//2)+1,)
+        n_features = n_mels if n_mels else n_fft//2+1
+
+        if n_mels:
+            self.mel = transforms.MelScale(n_mels=n_mels,
+                                                    sample_rate=sample_rate, 
+                                                    f_min=f_min,
+                                                    f_max=f_max,
+                                                    n_stft=int(n_fft//2)+1,)
 
         if rnn_type == "rnn":
-            self.rnn = nn.RNN(input_size=n_mels, 
+            self.rnn = nn.RNN(input_size=n_features, 
                         hidden_size=rnn_hidden, 
                         num_layers=rnn_layer, 
                         bias=False, 
-                        batch_first=True, 
+                        batch_first=True, # True, (batch, seq, feature)
                         bidirectional=False)
         elif rnn_type == "lstm":
-            self.rnn = nn.LSTM(input_size=n_mels, 
+            self.rnn = nn.LSTM(input_size=n_features, 
                         hidden_size=rnn_hidden, 
                         num_layers=rnn_layer, 
                         bias=False, 
                         batch_first=True, 
                         bidirectional=False)
         elif rnn_type == "gru":
-            self.rnn = nn.GRU(input_size=n_mels, 
+            self.rnn = nn.GRU(input_size=n_features, 
                         hidden_size=rnn_hidden, 
                         num_layers=rnn_layer, 
                         bias=False, 
@@ -61,11 +63,11 @@ class MelRNN(nn.Module):
         self.batchnorm = nn.BatchNorm1d(num_features=rnn_hidden)
         
         linear1 = nn.Linear(in_features=rnn_hidden, 
-                                out_features=n_mels, 
+                                out_features=n_features, 
                                 bias=True )
         activtaion1 = nn.ReLU()
-        linear2 = nn.Linear(in_features=n_mels, 
-                                out_features=n_mels, 
+        linear2 = nn.Linear(in_features=n_features,
+                                out_features=n_features, 
                                 bias=True )
         activtaion2 = nn.Sigmoid()
         
@@ -77,32 +79,39 @@ class MelRNN(nn.Module):
             activtaion2,
         ])
         
-        self.inverse_mel = transforms.InverseMelScale(n_stft=int(n_fft//2)+1, 
-                                                                n_mels=n_mels,
-                                                                sample_rate=sample_rate,
-                                                                f_min=f_min,
-                                                                f_max=f_max,
-                                                                max_iter=0,)
+        if n_mels:
+            self.inverse_mel = transforms.InverseMelScale(n_stft=int(n_fft//2)+1, 
+                                                                    n_mels=n_mels,
+                                                                    sample_rate=sample_rate,
+                                                                    f_min=f_min,
+                                                                    f_max=f_max,
+                                                                    max_iter=0,)
 
     def forward(self, inputs):
-        amplitude = self.amplitude(inputs)
-        amplitude = torch.pow(amplitude, exponent=0.3)
-        amplitude = torch.squeeze(amplitude, dim=1) # merge channel
-        mask = self.mel(amplitude)
-        mask = mask.transpose(-1, -2)
-        mask, hn = self.rnn(mask)
-        mask = mask.transpose(-1, -2)
-        mask = self.batchnorm(mask)
-        mask = mask.transpose(-1, -2)
+        x = self.amplitude(inputs)
+        x = torch.squeeze(x, dim=1) # merge channel
+        
+        if self.n_mels:
+            x = torch.pow(x, exponent=0.3)
+            x = self.mel(x) 
+        
+        x = x.transpose(-1, -2)
+        x, hn = self.rnn(x) # batch, seq, features
+        x = x.transpose(-1, -2)
+        
+        x = self.batchnorm(x) # batch, features, seq
+        
+        x = x.transpose(-1, -2)        
         for fc_layer in self.fc_layers:
-            mask = fc_layer(mask)
-        mask = mask.transpose(-1, -2)
-        mask = self.inverse_mel(mask)
-        mask = torch.unsqueeze(mask, dim=1)  # unmerge channel
-        mask = torch.unsqueeze(mask, dim=-1) # real, imag
+            x = fc_layer(x) # batch, features, seq 
+        x = x.transpose(-1, -2)        
 
-        outputs = inputs * mask
-        return outputs
+        if self.n_mels:
+            x = self.inverse_mel(x)
+
+        x = torch.unsqueeze(x, dim=1)  # unmerge channel
+        x = inputs*torch.unsqueeze(x, dim=-1) # real, imag
+        return x
 
 class Amplitude(nn.Module):
     def __init__(self,
@@ -125,7 +134,6 @@ class MergeChannel(nn.Module):
         else:
             return torch.unsqueeze(inputs, dim=1)
         
-
 
 if __name__ == "__main__":
     # First checking if GPU is available

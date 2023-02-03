@@ -411,6 +411,7 @@ class Solver(object):
 
             # mono channel to stereo for source separation models
             if self.config.model.name in ("demucs", "conv-tasnet") and nchannel == 1:
+                # [TODO] shape
                 try:
                     mixture = torch.cat(tensors=[mixture, mixture], dim=1)
                     clean = torch.cat(tensors=[clean, clean], dim=1)
@@ -424,8 +425,9 @@ class Solver(object):
                 mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
                 clean = torch.reshape(clean, shape=(batch*nchannel, 1, nsample))
 
-            if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
+            if self.config.model.name in ("mel-rnn", "dcunet", "crn", "dnn", "unet"):
                 # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
+                # [batch, channel, nfeature, nframe, ndtype]
                 mixture = self._stft(mixture)
                 clean = self._stft(clean)
 
@@ -442,11 +444,8 @@ class Solver(object):
             if self.config.model.name in ("demucs", "conv-tasnet") and enhanced.shape[1] == 1:
                 enhanced = torch.squeeze(enhanced, dim=1)
 
-            if self.config.model.name in ("dccrn"):
-                loss = self.model.loss(enhanced, clean, loss_mode='SI-SNR')
-            else:
-                loss: torch.Tensor = self.loss_function(clean, enhanced)
-            
+            loss: torch.Tensor = self.loss_function(clean, enhanced)
+
             if train:
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -463,7 +462,7 @@ class Solver(object):
 
             if not train:
                 # # skip the metric for training speed
-                # if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
+                # if self.config.model.name in ("mel-rnn", "dcunet", "crn", "dnn", "unet"):
                 #     # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
                 #     mixture = self._istft(mixture)
                 #     clean = self._istft(clean)    

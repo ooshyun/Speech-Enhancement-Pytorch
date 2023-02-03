@@ -29,7 +29,9 @@ class ModelSanityCheck(unittest.TestCase):
         test_dataloader, = get_dataloader(datasets=[test_dataset], config=config, train=False)
 
 
-        model_list = ['mel-rnn', # X
+        model_list = ['dnn',    # O
+                     'unet',
+                     'mel-rnn', # O
                      'dccrn',  # TODO: Test since GPU is using fully
                      'dcunet', # O
                      'demucs', # O
@@ -44,6 +46,8 @@ class ModelSanityCheck(unittest.TestCase):
         model = get_model(config.model)
         optimizer = get_optimizer(config.optim, model)
         loss_function = get_loss_function(config.optim)
+
+        print(model)
 
         solver = Solver(
             config = config,

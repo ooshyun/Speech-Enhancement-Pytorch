@@ -123,18 +123,16 @@ def NB_PESQ(reference, estimation, sr=16000):
         estimation_numpy = estimation.numpy()
     else:
         reference_numpy = reference
-        estimation_numpy = estimation 
-    score = 0
+        estimation_numpy = estimation        
+    num_batch, num_channel = reference_numpy.shape[0], reference_numpy.shape[1]
+    pesq_batch = np.empty(shape=(num_batch, num_channel))
 
-    for ref_batch, est_batch in zip(reference_numpy, estimation_numpy):
-        for ref_ch, est_ch in zip(ref_batch, est_batch):
-            # print(ref_ch.shape, est_ch.shape, type(ref_ch), type(est_ch))
-            # print(ref_ch, est_ch)
-            score += nb_pesq(sr, ref_ch, est_ch)
-    score /= (
-        reference.shape[0] * reference.shape[1]
-        if reference.shape[0] is not None
-        else reference.shape[1]
-    )
-    score = np.squeeze(score)
-    return score
+    for batch in range(num_batch):
+        for ch in range(num_channel):
+            pesq_batch[batch, ch] = nb_pesq(
+                sr,
+                reference_numpy[batch, ch],
+                estimation_numpy[batch, ch],
+            )
+    pesq_batch = np.sum(pesq_batch) / (num_batch * num_channel)
+    return pesq_batch

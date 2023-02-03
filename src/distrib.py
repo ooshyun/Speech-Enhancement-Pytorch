@@ -25,6 +25,8 @@ from .model.dcunet import DCUnet
 from .model.demucs import Demucs
 from .model.wav_unet import WavUnet
 from .model.mel_rnn import MelRNN
+from .model.dnn import DeepNeuralNetwork
+from .model.unet import UNet
 
 def collate_fn_pad(config, drop_last=True):
     def _collate_fn_pad(batch):
@@ -189,7 +191,9 @@ def get_dataloader(datasets: tp.List[Dataset], config, train=True) -> tp.List[Da
 
 def get_model(config):
     klass = {
+            'dnn': DeepNeuralNetwork,
             'mel-rnn': MelRNN,
+            'unet': UNet,
             'dccrn': DCCRN,
             'dcunet': DCUnet,
             'demucs': Demucs,
