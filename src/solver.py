@@ -123,16 +123,13 @@ class Solver(object):
         self.score = {"best_score": -np.inf,
                     "loss": 0,
                     "loss_valid": 0,
+                    "grad_norm": 0,
+                    "grad_norm_valid": 0,
                     "stoi": [],
                     "pesq": [],
                     "sisdr": [],
                     "haspi": [],
                     "hasqi": [],}
-
-        self.score_reference = {"loss": 0,
-                                "stoi": [],
-                                "pesq": [],
-                                "sisdr": []}
 
         self.score_inference = {"loss": 0,
                                 "stoi": [],
@@ -320,9 +317,15 @@ class Solver(object):
                 The parameters of the model. Follow-up we can specify epoch to inference.
             - best_model.tar:
                 Like latest_model, but only saved when <is_best> is True.
+            - state.json:
+                score when train
         """
         torch.save(state_dict, (self.checkpoints_dir / "latest_model.tar").as_posix())
         torch.save(state_dict["model"], (self.checkpoints_dir / f"model_{str(epoch).zfill(4)}_{self.config.solver.validation.metric}_{self.score['best_score']:2.8f}.pth").as_posix())
+        
+        with open(self.checkpoints_dir / "state.json", 'w') as tmp:
+            json.dump(self.score, tmp, indent=4) 
+
         if is_best:
             print(f"\t Found best score in {epoch} epoch, saving...")
             torch.save(state_dict, (self.checkpoints_dir / "best_model.tar").as_posix())
@@ -389,10 +392,11 @@ class Solver(object):
         ----------
             - mel-rnn (channel, nfeature, nframe, 2)
             - dcunet (channel, nfeature, nframe, 2)
-            - crn, (channel, nfeature, nframe, 2) -> [TODO] (1, nfeature(161), nframe)
+            - crn, (channel, nfeature, nframe, 2)
         """
         name_dataset = self.config.default.dset.name
         loss_total = 0.
+        grad_norm_total = 0.
         dataloader = self.train_dataloader if train else self.validation_dataloader
 
         total_step = len(dataloader)
@@ -482,6 +486,12 @@ class Solver(object):
             loss = loss.detach().item()
             loss_total += loss
 
+            grad_norm = 0
+            for n, p in self.model.named_parameters():
+                grad_norm += (p.grad.sum() ** 2)
+            grad_norm = grad_norm.sqrt().item()
+            grad_norm_total += grad_norm
+            
             if not train:
                 # with torch.no_grad():
                 # # skip the metric for training speed
@@ -528,18 +538,24 @@ class Solver(object):
 
                 # tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
                 self.writer.add_scalar(f"Validation/Loss_step", loss, (epoch+1)*total_step+step)
-                tepoch.set_postfix(loss=loss)
+                self.writer.add_scalar(f"Validation/grad_norm_step", grad_norm, (epoch+1)*total_step+step)
+                tepoch.set_postfix(loss_valid=loss)
             if train:
                 self.writer.add_scalar(f"Train/Loss_step", loss, (epoch+1)*total_step+step)
-                tepoch.set_postfix(loss=loss)
+                self.writer.add_scalar(f"Train/grad_norm_step", grad_norm, (epoch+1)*total_step+step)
+                tepoch.set_postfix(loss_train=loss)
 
         if train:
             self.score["loss"] = loss_total / len(dataloader)        
+            self.score["grad_norm"] = grad_norm_total / len(dataloader)        
             self.writer.add_scalar(f"Train/Loss", self.score["loss"], epoch)
+            self.writer.add_scalar(f"Train/Grad_norm", self.score["grad_norm"], epoch)
         
         if not train:
             self.score["loss_valid"] = loss_total / len(dataloader)        
-            self.writer.add_scalar(f"Validation/Loss", self.score["loss"], epoch)
+            self.score["grad_norm_valid"] = grad_norm_total / len(dataloader)        
+            self.writer.add_scalar(f"Validation/Loss", self.score["loss_valid"], epoch)
+            self.writer.add_scalar(f"Validation/Grad_norm", self.score["grad_norm_valid"], epoch)
 
             # for metric in list(self.metric.keys()):
             #     self.writer.add_scalars(f"Validation/{metric}", {

@@ -57,10 +57,10 @@ class ConvTasNet(nn.Module):
             N: Number of filters in autoencoder
             L: Length of the filters (in samples)
             B: Number of channels in bottleneck 1 * 1-conv block
-            H: Number of channels in convolutional blocks
+            H: Number of channels in convolutional blocks   
             P: Kernel size in convolutional blocks
-            X: Number of convolutional blocks in each repeat
-            R: Number of repeats
+            X: Number of convolutional blocks in each repeat - Number of dilation
+            R: Number of repeats                             - Number of TCN
             norm_type: BN, gLN, cLN
             causal: causal or non-causal
             mask_nonlinear: use which non-linear function to generate mask
@@ -70,7 +70,7 @@ class ConvTasNet(nn.Module):
             L: 16
             B: 128
             H: 512
-            Sc: 128
+            Sc: 128 # skip connection channels
             P: 3
             X: 8
             R: 3
@@ -78,7 +78,6 @@ class ConvTasNet(nn.Module):
             causal: False
             
         [TODO] Diagram - Notion
-
 
         """
         super(ConvTasNet, self).__init__()
