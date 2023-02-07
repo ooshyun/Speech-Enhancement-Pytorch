@@ -167,7 +167,7 @@ if __name__ == "__main__":
                     "as well as checking the delta with the offline implementation.")
     parser.add_argument("--sample_rate", default=16000, type=int)
     parser.add_argument("--segment", default=1.024, type=float)
-    parser.add_argument("--unet_channels", default=2, type=int)
+    parser.add_argument("--unet_channels", default=6, type=int)
     parser.add_argument("--unet_layer", default=4, type=int)
     parser.add_argument("--n_fft", default=512, type=int)
     parser.add_argument("--window_length", default=512, type=int)
@@ -185,6 +185,8 @@ if __name__ == "__main__":
     nframe = int(int(args.sample_rate*args.segment) // args.hop_length) + 1
     nfeature = int(args.n_fft//2)+1
     x = torch.randn(args.unet_channels, nfeature, nframe, 2).to(args.device) # channel, F, T, real/imag
+    print(f"In: wav {x.shape}")
+
     out_wav = model(x[None])
     print(f"Out: wav {out_wav.shape}")
 

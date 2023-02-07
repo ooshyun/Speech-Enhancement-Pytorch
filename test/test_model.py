@@ -30,16 +30,16 @@ class ModelSanityCheck(unittest.TestCase):
 
 
         model_list = ['dnn',    # O
-                     'unet',
+                     'unet',    # O
                      'mel-rnn', # O
                      'dccrn',  # TODO: Test since GPU is using fully
                      'dcunet', # O
                      'demucs', # O
                      'wav-unet', # O
-                     'conv-tasnet', # O, gpu 19421MiB
+                     'conv-tasnet', # O, gpu 19421MiB -> decrease size 
                      'crn', # X, out nan
                      ]
-        index_model = 1
+        index_model = -2
 
         config.model.name = model_list[index_model]
                      

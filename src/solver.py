@@ -10,6 +10,7 @@ Model list
     'wav-unet': WavUnet,
     'conv-tasnet': ConvTasNet,
     'crn': CRN,
+    'dnn':
 
 WAV mode
 ----------
@@ -27,6 +28,8 @@ STFT model(real, imag)
 STFT model(amplitude)
 ----------
     - crn
+    - dnn
+    - rnn types(mel-rnn)
 
 """
 import os
@@ -49,6 +52,8 @@ import torch.autograd
 
 from torch.utils.tensorboard import SummaryWriter
 from .evaluate import evaluate
+
+from .loss import PermutationInvariantTraining
 
 from .metric import (
     WB_PESQ,
@@ -386,6 +391,7 @@ class Solver(object):
             - dcunet (channel, nfeature, nframe, 2)
             - crn, (channel, nfeature, nframe, 2) -> [TODO] (1, nfeature(161), nframe)
         """
+        name_dataset = self.config.default.dset.name
         loss_total = 0.
         dataloader = self.train_dataloader if train else self.validation_dataloader
 
@@ -401,11 +407,15 @@ class Solver(object):
             
             if step >= total_step:
                 break
-            
-            mixture, clean, mixture_metadata, clean_metadata, name, index = batch
+
+            if name_dataset == "Clarity":
+                mixture, clean, interferer, mixture_metadata, clean_metadata, interferer_metadata, name, index = batch
+            else:
+                mixture, clean, mixture_metadata, clean_metadata, name, index = batch     
 
             mixture = mixture.to(self.device)
             clean = clean.to(self.device)
+            if name_dataset == "Clarity": interferer = interferer.to(self.device)
             
             batch, nchannel, nsample = mixture.shape
 
@@ -413,23 +423,27 @@ class Solver(object):
             if self.config.model.name in ("demucs", "conv-tasnet") and nchannel == 1:
                 # [TODO] shape
                 try:
-                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
-                    clean = torch.cat(tensors=[clean, clean], dim=1)
+                    mixture = torch.concat(tensors=[mixture, mixture], dim=1)
+                    clean = torch.concat(tensors=[clean, clean], dim=1)
+                    if name_dataset == "Clarity": interferer = torch.concat(tensors=[clean, clean], dim=1)
                 except AttributeError:
                     # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
                     mixture = torch.cat(tensors=[mixture, mixture], dim=1)
                     clean = torch.cat(tensors=[clean, clean], dim=1)
-
+                    if name_dataset == "Clarity": interferer = torch.cat(tensors=[interferer, interferer], dim=1)
+            
             # if not source separation models, merge batch and channels
-            if self.config.model.name not in ("demucs", "conv-tasnet"):
+            if self.config.model.name not in ("demucs", "conv-tasnet", "unet"):
                 mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
                 clean = torch.reshape(clean, shape=(batch*nchannel, 1, nsample))
+                if name_dataset == "Clarity": interferer = torch.reshape(interferer, shape=(batch*nchannel, 1, nsample))
 
             if self.config.model.name in ("mel-rnn", "dcunet", "crn", "dnn", "unet"):
                 # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
                 # [batch, channel, nfeature, nframe, ndtype]
                 mixture = self._stft(mixture)
                 clean = self._stft(clean)
+                if name_dataset == "Clarity": interferer = self._stft(interferer)
 
             if train:
                 self.model.train()
@@ -443,8 +457,16 @@ class Solver(object):
             # currently sources is 1 and channels 2
             if self.config.model.name in ("demucs", "conv-tasnet") and enhanced.shape[1] == 1:
                 enhanced = torch.squeeze(enhanced, dim=1)
+            
+            if self.config.optim.pit and name_dataset == "Clarity":
+                with torch.no_grad():
+                    index_enhanced, index_target = PermutationInvariantTraining(enhance=enhanced.detach().clone(), 
+                                                                            target=[clean.detach().clone(), interferer.detach().clone()],
+                                                                            loss_function=self.loss_function)
 
-            loss: torch.Tensor = self.loss_function(clean, enhanced)
+                loss: torch.Tensor = self.loss_function(enhanced[:, index_enhanced, ...], clean if index_target == 0 else interferer)
+            else:
+                loss: torch.Tensor = self.loss_function(clean, enhanced)
 
             if train:
                 self.optimizer.zero_grad()
@@ -461,6 +483,7 @@ class Solver(object):
             loss_total += loss
 
             if not train:
+                # with torch.no_grad():
                 # # skip the metric for training speed
                 # if self.config.model.name in ("mel-rnn", "dcunet", "crn", "dnn", "unet"):
                 #     # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
@@ -532,6 +555,7 @@ class Solver(object):
         return self.score["loss"] if train else self.score[self.config.solver.validation.metric]
 
     def inference(self, epoch, total_epoch):
+        name_dataset = self.config.default.dset.name
         loss_total = 0.
         dataloader = self.test_dataloader
 
@@ -547,8 +571,12 @@ class Solver(object):
             
             if step >= total_step:
                 break
+            
+            if name_dataset == "Clarity":
+                mixture, clean, interferer, origial_length, name = batch
+            else:
+                mixture, clean, origial_length, name = batch
 
-            mixture, clean, origial_length, name = batch
             batch, nchannel, nsample = mixture.shape
 
             if self.config.model.name in ("demucs", "conv-tasnet") and nchannel == 1:
@@ -571,11 +599,17 @@ class Solver(object):
             if self.config.model.name not in ("demucs", "conv-tasnet"):
                 mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
                 enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
-
+            
+            if self.config.optim.pit and name_dataset=="Clarity":
+                with torch.no_grad():
+                    index_enhance, _ = PermutationInvariantTraining(enhance=enhanced.detach().clone(),
+                                                                target=[clean.detach().clone(), ],
+                                                                loss_function=self.loss_function)
+                enhanced = enhanced[:, index_enhance, ...]
             loss: torch.Tensor = self.loss_function(clean, enhanced)
             loss = loss.detach().item()
             loss_total += loss
-            
+
             assert clean.shape == mixture.shape == enhanced.shape
 
             mixture = mixture.detach().cpu()
@@ -618,9 +652,9 @@ class Solver(object):
         enhanced_one_sequence = enhanced_one_sequence.view(nchannel*batch*nsamples) 
         clean_one_sequence = clean_one_sequence.view(nchannel*batch*nsamples) 
     
-        self.writer.add_audio(f"Speech/{name}_mixture", mixture_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
-        self.writer.add_audio(f"Speech/{name}_Enhanced", enhanced_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
-        self.writer.add_audio(f"Speech/{name}_Clean", clean_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        # self.writer.add_audio(f"Speech/{name}_mixture", mixture_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        # self.writer.add_audio(f"Speech/{name}_Enhanced", enhanced_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        # self.writer.add_audio(f"Speech/{name}_Clean", clean_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
         
         mixture_one_sequence = mixture_one_sequence.numpy()
         enhanced_one_sequence = enhanced_one_sequence.numpy()
@@ -659,7 +693,7 @@ class Solver(object):
         self.writer.add_figure(f"Spectrogram/{name}", fig, epoch)
         self.num_visualization += 1
 
-        del fig, axes
+        # del fig, axes
 
     def compute_metric(self, mixture, enhanced, clean):
         metric_name = list(self.metric.keys())

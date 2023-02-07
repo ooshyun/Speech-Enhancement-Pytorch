@@ -30,39 +30,60 @@ from .model.unet import UNet
 
 def collate_fn_pad(config, drop_last=True):
     def _collate_fn_pad(batch):
+        name_dataset = config.default.dset.name
         mixture_list = []
-        clean_list = []
         mixture_metadata_list = []
+
+        clean_list = []
         clean_metadata_list = []
+
+        if name_dataset == "Clarity":
+            interferer_list = []
+            interferer_metadata_list = []
+
         names = []
         index_batch = []
 
         for one_batch in batch:
-            mixture, clean, mixture_metadata, clean_metadata, name = one_batch
+            if name_dataset == "Clarity":
+                mixture, clean, interferer, mixture_metadata, clean_metadata, interferer_metadata, name = one_batch
+            else:
+                mixture, clean, mixture_metadata, clean_metadata, name = one_batch
+      
             mixture_metadata_list.append(mixture_metadata)
             clean_metadata_list.append(clean_metadata)
+            
+            if name_dataset == "Clarity": interferer_metadata_list.append(interferer_metadata)
 
-            segment_length = int(config.segment * config.sample_rate)
+            segment_length = int(config.dset.segment * config.dset.sample_rate)
 
             if drop_last and mixture.size()[-1] % segment_length != 0 and mixture.size()[-1] > segment_length:
                 mixture = mixture[...,:segment_length*int(mixture.size()[-1]//segment_length)]
                 clean = clean[...,:segment_length*int(mixture.size()[-1]//segment_length)]
+                if name_dataset == "Clarity": interferer = interferer[...,:segment_length*int(mixture.size()[-1]//segment_length)]
+
             elif not drop_last and mixture.size()[-1] % segment_length != 0 and mixture.size()[-1] > segment_length:
                 npad = int(mixture.size()[-1]//segment_length+1)*segment_length - mixture.size()[-1]
                 mixture = pad(mixture, pad=(0, npad), mode="constant", value=0)
                 clean = pad(clean, pad=(0, npad), mode="constant", value=0)
+                if name_dataset == "Clarity": interferer = pad(interferer, pad=(0, npad), mode="constant", value=0)
+
             elif mixture.size()[-1] < segment_length:
                 npad = mixture.size()[-1] - segment_length
                 mixture = pad(mixture, pad=(0, npad), mode="constant", value=0)
                 clean = pad(clean, pad=(0, npad), mode="constant", value=0)
+                if name_dataset == "Clarity": interferer = pad(interferer, pad=(0, npad), mode="constant", value=0)
 
             channel, length = mixture.size()
             nsegment = int(length // segment_length)
             mixture = mixture.view(channel, nsegment, segment_length)
             clean = clean.view(channel, nsegment, segment_length)
+            if name_dataset == "Clarity": interferer = interferer.view(channel, nsegment, segment_length)
 
             mixture_list.append(mixture) 
             clean_list.append(clean)
+            if name_dataset == "Clarity": interferer_list.append(interferer)
+
             names.append(name)
             index_batch.append(mixture.size()[1])
             
@@ -76,12 +97,16 @@ def collate_fn_pad(config, drop_last=True):
         try:
             mixture_list = torch.concat(mixture_list, dim=1).permute(1, 0, 2)
             clean_list = torch.concat(clean_list, dim=1).permute(1, 0, 2)
+            if name_dataset == "Clarity": interferer_list = torch.concat(interferer_list, dim=1).permute(1, 0, 2)
         except AttributeError:
             # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
             mixture_list = torch.cat(mixture_list, dim=1).permute(1, 0, 2)
             clean_list = torch.cat(clean_list, dim=1).permute(1, 0, 2)
-
-        return mixture_list, clean_list, mixture_metadata_list, clean_metadata_list, names, index_batch
+            if name_dataset == "Clarity": interferer_list = torch.cat(interferer_list, dim=1).permute(1, 0, 2)
+        if name_dataset == "Clarity":
+            return mixture_list, clean_list, interferer_list, mixture_metadata_list, clean_metadata_list, interferer_metadata_list, names, index_batch
+        else:
+            return mixture_list, clean_list, mixture_metadata_list, clean_metadata_list, names, index_batch
     return _collate_fn_pad
 
 def get_train_wav_voicebankdemand(config):
@@ -181,7 +206,7 @@ def get_dataloader(datasets: tp.List[Dataset], config, train=True) -> tp.List[Da
                                 batch_size=config.solver.batch_size if train else 1,
                                 shuffle=True,
                                 num_workers=config.solver.num_workers,
-                                collate_fn=collate_fn_pad(config.dset, drop_last=True) if train else None,
+                                collate_fn=collate_fn_pad(config, drop_last=True) if train else None,
                                 pin_memory=True,
                                 # drop_last=True,
                                 prefetch_factor=2,

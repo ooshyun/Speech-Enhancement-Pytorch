@@ -60,10 +60,16 @@ def evaluate(mixture, model, device, config):
         if config.model.name in ("mel-rnn", "dcunet", "crn", "dnn", "unet"):
             output = _istft(output, config)
         
-        output = output.reshape(num_segment, batch, nchannel, nsample)
-
-        shape = list(mixture.shape)
-        shape = shape[:-1] + [num_feature + stride*(output.shape[0]-1)]
+        if config.model.name in ("conv-tasnet"):
+            num_sources = len(config.model.sources)
+            output = output.reshape(num_segment, batch, num_sources, nchannel, nsample)
+            shape = list(mixture.shape)
+            shape = shape[:-2] + [num_sources, shape[-2]] + [num_feature + stride*(output.shape[0]-1)]
+        else:
+            output = output.reshape(num_segment, batch, nchannel, nsample)
+            shape = list(mixture.shape)
+            shape = shape[:-1] + [num_feature + stride*(output.shape[0]-1)]
+        
         enhanced = torch.zeros(size=shape, dtype=mixture.dtype)
         enhanced[..., :num_feature] = output[0, ...]
         for ibatch in range(output.shape[0]-1):

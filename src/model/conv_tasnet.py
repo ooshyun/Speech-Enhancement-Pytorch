@@ -8,8 +8,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-EPS = 1e-8
-
 def overlap_and_add(signal, frame_step):
     outer_dimensions = signal.size()[:-2]
     frames, frame_length = signal.size()[-2:]
@@ -49,6 +47,7 @@ class ConvTasNet(nn.Module):
                  mask_nonlinear='relu',
                  sample_rate=44100,
                  segment_length=44100 * 2 * 4,
+                 skip=True,
                  *args,
                  **kwargs,
                  ):
@@ -65,6 +64,22 @@ class ConvTasNet(nn.Module):
             norm_type: BN, gLN, cLN
             causal: causal or non-causal
             mask_nonlinear: use which non-linear function to generate mask
+
+        Best:
+            N: 512
+            L: 16
+            B: 128
+            H: 512
+            Sc: 128
+            P: 3
+            X: 8
+            R: 3
+            norm_type: gLN    
+            causal: False
+            
+        [TODO] Diagram - Notion
+
+
         """
         super(ConvTasNet, self).__init__()
         # Hyper-parameter
@@ -80,7 +95,7 @@ class ConvTasNet(nn.Module):
         # Components
         self.encoder = Encoder(L, N, audio_channels)
         self.separator = TemporalConvNet(
-            N, B, H, P, X, R, self.C, norm_type, causal, mask_nonlinear)
+            N, B, H, P, X, R, self.C, norm_type, causal, mask_nonlinear, skip=skip)
         self.decoder = Decoder(N, L, audio_channels)
         # init
         for p in self.parameters():
@@ -158,12 +173,14 @@ class Decoder(nn.Module):
         return est_source
 
 
+EPS = 1e-8
+
 class TemporalConvNet(nn.Module):
-    def __init__(self, N, B, H, P, X, R, C, norm_type="gLN", causal=False, mask_nonlinear='relu'):
+    def __init__(self, N, B, H, P, X, R, C, norm_type="gLN", causal=False, out_activation='relu', skip=True):
         """
         Args:
             N: Number of filters in autoencoder
-            B: Number of channels in bottleneck 1 × 1-conv block
+            B: Number of channels in bottleneck 1 * 1-conv block,
             H: Number of channels in convolutional blocks
             P: Kernel size in convolutional blocks
             X: Number of convolutional blocks in each repeat
@@ -171,12 +188,16 @@ class TemporalConvNet(nn.Module):
             C: Number of speakers
             norm_type: BN, gLN, cLN
             causal: causal or non-causal
-            mask_nonlinear: use which non-linear function to generate mask
+            out_activation: use which non-linear function to generate mask
+
+
+        [TODO] Diagram - Notion
+
         """
         super(TemporalConvNet, self).__init__()
         # Hyper-parameter
         self.C = C
-        self.mask_nonlinear = mask_nonlinear
+        self.out_activation = out_activation
         # Components
         # [M, N, K] -> [M, N, K]
         layer_norm = ChannelwiseLayerNorm(N)
@@ -184,27 +205,42 @@ class TemporalConvNet(nn.Module):
         bottleneck_conv1x1 = nn.Conv1d(N, B, 1, bias=False)
         # [M, B, K] -> [M, B, K]
         repeats = []
-        for r in range(R):
+        for _ in range(R):
             blocks = []
             for x in range(X):
                 dilation = 2**x
                 padding = (P - 1) * dilation if causal else (P - 1) * dilation // 2
                 blocks += [
-                    TemporalBlock(B,
-                                  H,
-                                  P,
+                    TemporalBlock(B, # in channels
+                                  H, # out channels
+                                  P, # kernel size
                                   stride=1,
                                   padding=padding,
                                   dilation=dilation,
                                   norm_type=norm_type,
-                                  causal=causal)
+                                  causal=causal,
+                                  skip=skip)
                 ]
             repeats += [nn.Sequential(*blocks)]
         temporal_conv_net = nn.Sequential(*repeats)
+        
+        # [TODO] where is prelu before pointwise convolution? 
+
         # [M, B, K] -> [M, C*N, K]
-        mask_conv1x1 = nn.Conv1d(B, C * N, 1, bias=False)
+        mask_conv1x1 = nn.Conv1d(B,     # in channels
+                                C * N,  # out channels
+                                1,      # kernel size
+                                bias=False)
+        
         # Put together
-        self.network = nn.Sequential(layer_norm, bottleneck_conv1x1, temporal_conv_net,
+        self.skip = skip
+        if skip:
+            self.layer_norm = layer_norm
+            self.bottleneck_conv1x1 = bottleneck_conv1x1
+            self.temporal_conv_net = temporal_conv_net
+            self.mask_conv1x1 = mask_conv1x1
+        else:
+            self.network = nn.Sequential(layer_norm, bottleneck_conv1x1, temporal_conv_net,
                                      mask_conv1x1)
 
     def forward(self, mixture_w):
@@ -216,12 +252,22 @@ class TemporalConvNet(nn.Module):
             est_mask: [M, C, N, K]
         """
         M, N, K = mixture_w.size()
-        score = self.network(mixture_w)  # [M, N, K] -> [M, C*N, K]
-        score = score.view(M, self.C, N, K)  # [M, C*N, K] -> [M, C, N, K]
-        if self.mask_nonlinear == 'softmax':
-            est_mask = F.softmax(score, dim=1)
-        elif self.mask_nonlinear == 'relu':
-            est_mask = F.relu(score)
+
+        # [M, N, K] -> [M, C*N, K]
+        if self.skip:
+            x = self.layer_norm(mixture_w)
+            x = self.bottleneck_conv1x1(x)
+            skip = None
+            _, skip = self.temporal_conv_net([x, skip])
+            x = self.mask_conv1x1(skip)
+        else:
+            x = self.network(mixture_w)
+        
+        x = x.view(M, self.C, N, K)  # [M, C*N, K] -> [M, C, N, K]
+        if self.out_activation == 'softmax':
+            est_mask = F.softmax(x, dim=1)
+        elif self.out_activation == 'relu':
+            est_mask = F.relu(x)
         else:
             raise ValueError("Unsupported mask non-linear function")
         return est_mask
@@ -236,7 +282,8 @@ class TemporalBlock(nn.Module):
                  padding,
                  dilation,
                  norm_type="gLN",
-                 causal=False):
+                 causal=False,
+                 skip=True):
         super(TemporalBlock, self).__init__()
         # [M, B, K] -> [M, H, K]
         conv1x1 = nn.Conv1d(in_channels, out_channels, 1, bias=False)
@@ -244,10 +291,13 @@ class TemporalBlock(nn.Module):
         norm = chose_norm(norm_type, out_channels)
         # [M, H, K] -> [M, B, K]
         dsconv = DepthwiseSeparableConv(out_channels, in_channels, kernel_size, stride, padding,
-                                        dilation, norm_type, causal)
+                                        dilation, norm_type, causal, skip=skip)
+        
         # Put together
+        # self.net = nn.Sequential(conv1x1, prelu, norm, dsconv)
         self.net = nn.Sequential(conv1x1, prelu, norm, dsconv)
-
+        self.skip = skip
+        
     def forward(self, x):
         """
         Args:
@@ -255,11 +305,17 @@ class TemporalBlock(nn.Module):
         Returns:
             [M, B, K]
         """
-        residual = x
-        out = self.net(x)
+        if self.skip:
+            residual = x[0]
+            skip_out = x[1]
+            out, skip = self.net(x[0])
+            return out+residual, skip+skip_out if skip_out is not None else skip
+        else:
+            residual = x
+            out = self.net(x)
+            return out+residual
         # TODO: when P = 3 here works fine, but when P = 2 maybe need to pad?
-        return out + residual  # look like w/o F.relu is better than w/ F.relu
-        # return F.relu(out + residual)
+        # return F.relu(out + residual) # look like w/o F.relu is better than w/ F.relu
 
 
 class DepthwiseSeparableConv(nn.Module):
@@ -271,7 +327,8 @@ class DepthwiseSeparableConv(nn.Module):
                  padding,
                  dilation,
                  norm_type="gLN",
-                 causal=False):
+                 causal=False,
+                 skip=True):
         super(DepthwiseSeparableConv, self).__init__()
         # Use `groups` option to implement depthwise convolution
         # [M, H, K] -> [M, H, K]
@@ -288,13 +345,18 @@ class DepthwiseSeparableConv(nn.Module):
         prelu = nn.PReLU()
         norm = chose_norm(norm_type, in_channels)
         # [M, H, K] -> [M, B, K]
-        pointwise_conv = nn.Conv1d(in_channels, out_channels, 1, bias=False)
+        self.pointwise_conv = nn.Conv1d(in_channels, out_channels, 1, bias=False)
+        
         # Put together
         if causal:
-            self.net = nn.Sequential(depthwise_conv, chomp, prelu, norm, pointwise_conv)
+            self.net = nn.Sequential(depthwise_conv, chomp, prelu, norm)
         else:
-            self.net = nn.Sequential(depthwise_conv, prelu, norm, pointwise_conv)
-
+            self.net = nn.Sequential(depthwise_conv, prelu, norm)
+        
+        if skip:
+            self.skip_conv = nn.Conv1d(in_channels, out_channels, 1, bias=False)
+        self.skip = skip
+        
     def forward(self, x):
         """
         Args:
@@ -302,7 +364,11 @@ class DepthwiseSeparableConv(nn.Module):
         Returns:
             result: [M, B, K]
         """
-        return self.net(x)
+        x = self.net(x)
+        if self.skip:
+            return self.pointwise_conv(x), self.skip_conv(x)
+        else:
+            return self.pointwise_conv(x)
 
 
 class Chomp1d(nn.Module):
@@ -389,7 +455,6 @@ class GlobalLayerNorm(nn.Module):
         gLN_y = self.gamma * (y - mean) / torch.pow(var + EPS, 0.5) + self.beta
         return gLN_y
 
-
 if __name__ == "__main__":
     # First checking if GPU is available
     train_on_gpu=torch.cuda.is_available()
@@ -454,6 +519,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_channels", default=2, type=int)
     parser.add_argument("--depth", default=12, type=int)
     parser.add_argument("--channels_interval", default=24, type=int)
+    parser.add_argument("--skip", default=False, type=bool)    
     parser.add_argument("--device", default="cpu", type=str)
         
     args = parser.parse_args()
@@ -461,7 +527,8 @@ if __name__ == "__main__":
     model = get_model()([None]*args.num_sources, N, L, B, H, P, X, R, # C(input_channels)
                         audio_channels=args.input_channels,
                         sample_rate=args.sample_rate,
-                        norm_type=norm_type).to(args.device)
+                        norm_type=norm_type,
+                        skip=args.skip).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
     x = torch.randn(args.input_channels, length).to(args.device)

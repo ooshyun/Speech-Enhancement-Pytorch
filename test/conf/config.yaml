@@ -5,7 +5,7 @@ default:
   # dset: 
   #   name: 'Clarity'
   #   config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
-  
+    
 dummy:
 misc:
   num_workers: 1
@@ -27,6 +27,7 @@ optim:
   # loss: 'ideal-mag'
   # loss: 'si-sdr'
   clip_grad: False
+  pit: True
 
 model:
   # wav-unet, dcunet, demucs, unet
@@ -80,6 +81,12 @@ model:
   
   # Demucs
   sources: [None]
+
+  # Conv-tasnet
+  sources: [None] # [None, None]
+  skip: False
+  input_channels: 2
+
     
 dset:
   wav: './data/VoiceBankDEMAND/DS_10283_2791'

@@ -16,3 +16,16 @@ def si_snr(s1, s2, eps=1e-8):
     noise_norm = l2_norm(e_nosie, e_nosie)
     snr = 10*torch.log10((target_norm)/(noise_norm+eps)+eps)
     return torch.mean(snr)
+
+def PermutationInvariantTraining(enhance, target: list, loss_function):
+    min_loss = 1e12
+    
+    index_enhance, index_target = 0, 0
+    for i in range(enhance.shape[1]):
+        for j in range(len(target)):
+            loss = loss_function(enhance[:, i, ...], target[j])
+            if loss < min_loss:
+                min_loss = loss
+                index_enhance, index_target = i, j
+
+    return index_enhance, index_target

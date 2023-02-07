@@ -1,10 +1,10 @@
 default:
-  dset: 
-    name: 'VoiceBankDEMAND'
-    config:
   # dset: 
-  #   name: 'Clarity'
-  #   config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
+  #   name: 'VoiceBankDEMAND'
+  #   config:
+  dset: 
+    name: 'Clarity'
+    config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
   
 dummy:
 misc:
@@ -27,6 +27,7 @@ optim:
   # loss: 'ideal-mag'
   # loss: 'si-sdr'
   clip_grad: False
+  pit: True
 
 model:
   # wav-unet, dcunet, demucs, dccrn, mel-rnn, crn
@@ -87,9 +88,14 @@ model:
   # paper [32,64,128,128,256,256]
   kernel_num: [16,32,64,128,256,256]
     
+  # Conv-tasnet
+  sources: [None, None]
+  skip: False
+  input_channels: 2
+
 dset:
-  wav: './data/VoiceBankDEMAND/DS_10283_2791'
-  # wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
+  # wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
   split: [0.85, 0.1, 0.05]
   segment: 1.024  
   use_all: False
@@ -105,10 +111,10 @@ solver:
   epochs: 400
   batch_size: 4
   all_steps: False
-  total_steps: 2000
+  total_steps: 5000
   save_checkpoint_interval: 5
   patience: 40
-  resume: # './result/dnn/20230202-175117'
+  resume: #'./result/conv-tasnet/20230207-002844'
   preloaded_model:
   cudnn_deterministic: True
   validation: 
@@ -120,5 +126,5 @@ solver:
     num_show: 10
     metric: 'sisdr' # loss, stoi, pesq, sisdr
   
-name: 'mel-rnn'
+name: 'conv-tasnet'
 seed: 10

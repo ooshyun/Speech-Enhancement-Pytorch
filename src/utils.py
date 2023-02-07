@@ -16,15 +16,16 @@ def split_list(data:list, ratio: list):
     return data_result[:middle], data_result[middle:]
 
 
-def sample_fixed_length_data_aligned(data_a, data_b, sample_length, start=None):
-    """sample with fixed length from two dataset
+def sample_fixed_length_data_aligned(data_list: list, sample_length, start=None):
+    """sample with fixed length from several dataset
 
         time = [start, end]
     """
-    assert data_a.shape[-1] == data_b.shape[-1], "Inconsistent dataset length, unable to sampling"
-    assert data_a.shape[-1] >= sample_length, f"len(data_a) is {data_a.shape[-1]}, sample_length is {sample_length}."
+    assert isinstance(data_list, list)
+    
+    assert data_list[0].shape[-1] >= sample_length, f"len(data_a) is {data_list[0].shape[-1]}, sample_length is {sample_length}."
 
-    length_data = data_a.shape[-1]
+    length_data = data_list[0].shape[-1]
     
     if start is None:
         start = np.random.randint(length_data - sample_length + 1)
@@ -32,7 +33,13 @@ def sample_fixed_length_data_aligned(data_a, data_b, sample_length, start=None):
 
     end = start + sample_length
 
-    return data_a[..., start:end], data_b[..., start:end]
+    data_result_list = [None]*len(data_list)
+    for i in range(len(data_list)):
+        data_result_list[i] = data_list[i][..., start:end]
+
+    return data_result_list
+
+    
 
 
 def prepare_device(n_gpu: int, cudnn_deterministic=False):
