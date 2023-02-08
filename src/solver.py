@@ -10,6 +10,7 @@ Model list
     'wav-unet': WavUnet,
     'conv-tasnet': ConvTasNet,
     'crn': CRN,
+    'dnn': DeepNeuralNetwork,
 
 WAV mode
 ----------
@@ -27,6 +28,8 @@ STFT model(real, imag)
 STFT model(amplitude)
 ----------
     - crn
+    - dnn
+    - rnn types(mel-rnn)
 
 """
 import os
@@ -34,7 +37,6 @@ import time
 import json
 import tqdm
 import librosa
-import soundfile as sf
 import librosa.display
 import matplotlib.pyplot as plt
 
@@ -48,7 +50,13 @@ import torch
 import torch.autograd
 
 from torch.utils.tensorboard import SummaryWriter
-from .evaluate import evaluate
+from .evaluate import (
+    evaluate,
+    stft_custom,
+    istft_custom,
+)
+
+from .loss import PermutationInvariantTraining
 
 from .metric import (
     WB_PESQ,
@@ -59,7 +67,8 @@ from .metric import (
 from .utils import (
     prepare_device,
     obj2dict,
-    load_yaml
+    load_yaml,
+    get_filtered_snr_file,
 )
 
 try:
@@ -76,10 +85,17 @@ try:
     from torchmetrics.audio import (
     ShortTimeObjectiveIntelligibility,
     PerceptualEvaluationSpeechQuality,
+    PIT,
 )
     LIB_TORCH_METRIC = True
 except ImportError:
     LIB_TORCH_METRIC = False
+
+MULTI_SPEECH_SEPERATION_MODELS = ("demucs", "conv-tasnet")
+MULTI_CHANNEL_SEPERATION_MODELS = ("demucs", "conv-tasnet", "unet")
+MONARCH_SPEECH_SEPARTAION_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet", "dccrn", "wav-unet")
+STFT_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet")
+WAV_MODELS = ("dccrn", "demucs", "conv-tasnet", "wav-unet")
 
 class Solver(object):
     def __init__(self, 
@@ -118,16 +134,13 @@ class Solver(object):
         self.score = {"best_score": -np.inf,
                     "loss": 0,
                     "loss_valid": 0,
+                    "grad_norm": 0,
+                    "grad_norm_valid": 0,
                     "stoi": [],
                     "pesq": [],
                     "sisdr": [],
                     "haspi": [],
                     "hasqi": [],}
-
-        self.score_reference = {"loss": 0,
-                                "stoi": [],
-                                "pesq": [],
-                                "sisdr": []}
 
         self.score_inference = {"loss": 0,
                                 "stoi": [],
@@ -182,6 +195,10 @@ class Solver(object):
         copyfile(config.root, (self.root_dir / "config.yaml").as_posix())
         
         self._print_networks([self.model])
+
+        ### SNR FILES ###
+        self.file_name_list = None
+        # self.file_name_list = get_filtered_snr_file(config)
 
     def _resume_checkpoint(self):
         """
@@ -241,49 +258,6 @@ class Solver(object):
 
         print(f"The amount of parameters in the project is {params_of_all_networks / 1e6} million.")
 
-    def _stft(self, tensor: torch.Tensor):
-        batch, nchannel, nsample = tensor.size()
-    
-        tensor = tensor.reshape(batch*nchannel, nsample)
-
-        tensor = torch.stft(input=tensor,
-                        n_fft=self.config.model.n_fft,
-                        hop_length=self.config.model.hop_length,
-                        win_length=self.config.model.win_length,
-                        window=torch.hann_window(window_length=self.config.model.win_length, dtype=tensor.dtype, device=tensor.device),
-                        center=self.config.model.center,
-                        pad_mode="reflect",
-                        normalized=False, # *frame_length**(-0.5)
-                        onesided=None,
-                        return_complex=False,
-                        )
-        tensor /= self.config.model.win_length
-        _, nfeature, nframe, ndtype = tensor.size()
-        tensor = tensor.reshape(batch, nchannel, nfeature, nframe, ndtype)
-        return tensor
-        
-    def _istft(self, tensor: torch.Tensor):
-        batch, nchannel, nfeature, nframe, ndtype = tensor.size()
-        tensor *= self.config.model.win_length
-        tensor = tensor.reshape(batch*nchannel, nfeature, nframe, ndtype)
-        tensor_complex = torch.complex(real=tensor[..., 0], imag=tensor[..., 1])
-        
-        tensor = torch.istft(
-            input=tensor_complex,
-            n_fft=self.config.model.n_fft,
-            hop_length=self.config.model.hop_length,
-            win_length=self.config.model.win_length,
-            window=torch.hann_window(window_length=self.config.model.win_length, dtype=tensor.dtype, device=tensor.device),
-            center=self.config.model.center,
-            length=int(self.config.model.segment*self.config.model.sample_rate),
-            normalized=False,
-            onesided=None,
-            return_complex=False,
-        )
-        _, nsample = tensor.size()
-        tensor = tensor.reshape(batch, nchannel, nsample)
-        return tensor
-
     def _save_checkpoint(self, epoch, is_best=False):
         """Save checkpoint to <root_dir>/checkpoints directory, which contains:
             - current epoch
@@ -315,9 +289,15 @@ class Solver(object):
                 The parameters of the model. Follow-up we can specify epoch to inference.
             - best_model.tar:
                 Like latest_model, but only saved when <is_best> is True.
+            - state.json:
+                score when train
         """
         torch.save(state_dict, (self.checkpoints_dir / "latest_model.tar").as_posix())
         torch.save(state_dict["model"], (self.checkpoints_dir / f"model_{str(epoch).zfill(4)}_{self.config.solver.validation.metric}_{self.score['best_score']:2.8f}.pth").as_posix())
+        
+        with open(self.checkpoints_dir / "state.json", 'w') as tmp:
+            json.dump(self.score, tmp, indent=4) 
+
         if is_best:
             print(f"\t Found best score in {epoch} epoch, saving...")
             torch.save(state_dict, (self.checkpoints_dir / "best_model.tar").as_posix())
@@ -361,7 +341,7 @@ class Solver(object):
                     early_stopping = 0
                 else:
                     early_stopping += 1
-                
+            
             if epoch % self.test_interval == 0:
                 print(f"[{int(time.time() - start_time)} seconds] Training and Validation are over, Test is in progress...")
                 score = self.inference(epoch, self.epochs)            
@@ -384,9 +364,11 @@ class Solver(object):
         ----------
             - mel-rnn (channel, nfeature, nframe, 2)
             - dcunet (channel, nfeature, nframe, 2)
-            - crn, (channel, nfeature, nframe, 2) -> [TODO] (1, nfeature(161), nframe)
+            - crn, (channel, nfeature, nframe, 2)
         """
+        name_dataset = self.config.dset.name
         loss_total = 0.
+        grad_norm_total = 0.
         dataloader = self.train_dataloader if train else self.validation_dataloader
 
         total_step = len(dataloader)
@@ -401,33 +383,35 @@ class Solver(object):
             
             if step >= total_step:
                 break
-            
-            mixture, clean, mixture_metadata, clean_metadata, name, index = batch
+
+            mixture, sources, mixture_metadata, sources_metadta, name, index = batch
 
             mixture = mixture.to(self.device)
-            clean = clean.to(self.device)
+            sources = sources.to(self.device)
             
             batch, nchannel, nsample = mixture.shape
-
+            num_spk = sources.shape[1]
+    
             # mono channel to stereo for source separation models
-            if self.config.model.name in ("demucs", "conv-tasnet") and nchannel == 1:
-                try:
-                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
-                    clean = torch.cat(tensors=[clean, clean], dim=1)
-                except AttributeError:
-                    # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
-                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
-                    clean = torch.cat(tensors=[clean, clean], dim=1)
+            assert self.config.model.audio_channels == nchannel, f"Channel between {self.config.dset.name} and {self.config.model.name} did not match..."
+            assert self.config.model.num_spk == num_spk, f"number of speakers between {self.config.dset.name} and {self.config.model.name} did not match..."
+            
+            if self.config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
+                assert num_spk == len(self.config.model.sources), f"number of speakers between {self.config.dset.name} and {self.config.model.name} did not match..."
+
+            if self.config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS: # squeeze dim sources
+                    sources = torch.squeeze(sources, dim=1)                
 
             # if not source separation models, merge batch and channels
-            if self.config.model.name not in ("demucs", "conv-tasnet"):
+            if self.config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
                 mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
-                clean = torch.reshape(clean, shape=(batch*nchannel, 1, nsample))
+                sources = torch.reshape(sources, shape=(batch*num_spk*nchannel, 1, nsample))
 
-            if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
+            if self.config.model.name in STFT_MODELS:
                 # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
-                mixture = self._stft(mixture)
-                clean = self._stft(clean)
+                # return shape: [batch, channel, nfeature, nframe, ndtype]
+                mixture = stft_custom(tensor=mixture, config=self.config)
+                sources = stft_custom(tensor=sources, config=self.config)
 
             if train:
                 self.model.train()
@@ -437,12 +421,17 @@ class Solver(object):
             # with torch.autograd.detect_anomaly(): # figuring out nan grads
             enhanced: torch.Tensor = self.model(mixture)
 
-            # source separation models give out.shape = batch, sources, channels, features, currently sources is 1
-            if self.config.model.name in ("demucs", "conv-tasnet"):
-                enhanced = torch.squeeze(enhanced, dim=1)
+            # source separation models give out.shape = batch, sources, channels, features, 
+            if self.config.optim.pit and num_spk >= 2:
+                with torch.no_grad():
+                    index_enhanced, index_target = PermutationInvariantTraining(enhance=enhanced.detach().clone(), 
+                                                                            target=sources.detach().clone(),
+                                                                            loss_function=self.loss_function)
 
-            loss: torch.Tensor = self.loss_function(clean, enhanced)
-            
+                loss: torch.Tensor = self.loss_function(enhanced[:, index_enhanced, ...], sources[:, index_target, ...])
+            else:
+                loss: torch.Tensor = self.loss_function(enhanced, sources)
+
             if train:
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -457,63 +446,31 @@ class Solver(object):
             loss = loss.detach().item()
             loss_total += loss
 
+            grad_norm = 0
+            for n, p in self.model.named_parameters():
+                grad_norm += (p.grad.sum() ** 2)
+            grad_norm = grad_norm.sqrt().item()
+            grad_norm_total += grad_norm
+            
             if not train:
-                # # skip the metric for training speed
-                # if self.config.model.name in ("mel-rnn", "dcunet", "crn"):
-                #     # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
-                #     mixture = self._istft(mixture)
-                #     clean = self._istft(clean)    
-                #     enhanced = self._istft(enhanced)    
-
-                # if self.config.model.name not in ("demucs", "conv-tasnet"):
-                #     mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
-                #     clean = torch.reshape(clean, shape=(batch, nchannel, nsample))
-                #     enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
-                    
-                # mixture = mixture.detach().cpu()
-                # clean = clean.detach().cpu()
-                # enhanced = enhanced.detach().cpu()
-
-                # start, end = 0, 0
-                # for ibatch in range(len(index)):
-                #     end += index[ibatch]
-                #     if self.config.dset.norm == "z-score":
-                #         mix_std, mix_mean = mixture_metadata[ibatch]["std"], mixture_metadata[ibatch]["mean"]
-                #         clean_std, clean_mean = clean_metadata[ibatch]["std"], clean_metadata[ibatch]["mean"]
-                                                
-                #         mixture[start:end] = mixture[start:end]*mix_std+mix_mean
-                #         clean[start:end] = clean[start:end]*clean_std+clean_mean
-                #         enhanced[start:end] = enhanced[start:end]*mix_std+mix_mean
-
-                #     if self.config.dset.norm == "linear-scale":                        
-                #         mix_min, mix_max = mixture_metadata[ibatch]["min"], mixture_metadata[ibatch]["max"]
-                #         clean_min, clean_max = clean_metadata[ibatch]["min"], clean_metadata[ibatch]["max"]
-                #         mixture[start:end] = mixture[start:end]*(mix_max-mix_min)+mix_min
-                #         clean[start:end] = clean[start:end]*(clean_max-clean_min)+clean_min
-                #         enhanced[start:end] = enhanced[start:end]*(mix_max-mix_min)+mix_min
-                #     start += index[ibatch]
-                                                    
-                # score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean)
-
-                # for metric_name, metric_value in score.items():
-                #     self.score[metric_name] += metric_value
-                # for metric_name, metric_value in score_reference.items():
-                #     self.score_reference[metric_name] += metric_value                
-
-                # tepoch.set_postfix(loss=loss, metric=np.mean(self.score[self.config.solver.validation.metric]))
-                self.writer.add_scalar(f"Validation/Loss_step", loss, epoch)
-                tepoch.set_postfix(loss=loss)
+                self.writer.add_scalar(f"Validation/Loss_step", loss, (epoch+1)*total_step+step)
+                tepoch.set_postfix(loss_valid=loss)
             if train:
-                self.writer.add_scalar(f"Train/Loss_step", loss, epoch)
-                tepoch.set_postfix(loss=loss)
+                self.writer.add_scalar(f"Train/Loss_step", loss, (epoch+1)*total_step+step)
+                self.writer.add_scalar(f"Train/grad_norm_step", grad_norm, (epoch+1)*total_step+step)
+                tepoch.set_postfix(loss_train=loss)
 
         if train:
             self.score["loss"] = loss_total / len(dataloader)        
+            self.score["grad_norm"] = grad_norm_total / len(dataloader)        
             self.writer.add_scalar(f"Train/Loss", self.score["loss"], epoch)
+            self.writer.add_scalar(f"Train/Grad_norm", self.score["grad_norm"], epoch)
         
         if not train:
             self.score["loss_valid"] = loss_total / len(dataloader)        
-            self.writer.add_scalar(f"Validation/Loss", self.score["loss"], epoch)
+            self.score["grad_norm_valid"] = grad_norm_total / len(dataloader)        
+            self.writer.add_scalar(f"Validation/Loss", self.score["loss_valid"], epoch)
+            self.writer.add_scalar(f"Validation/Grad_norm", self.score["grad_norm_valid"], epoch)
 
             # for metric in list(self.metric.keys()):
             #     self.writer.add_scalars(f"Validation/{metric}", {
@@ -529,6 +486,7 @@ class Solver(object):
         return self.score["loss"] if train else self.score[self.config.solver.validation.metric]
 
     def inference(self, epoch, total_epoch):
+        name_dataset = self.config.dset.name
         loss_total = 0.
         dataloader = self.test_dataloader
 
@@ -545,49 +503,65 @@ class Solver(object):
             if step >= total_step:
                 break
 
-            mixture, clean, origial_length, name = batch
-            batch, nchannel, nsample = mixture.shape
+            mixture, sources, original_length, name = batch
 
-            if self.config.model.name in ("demucs", "conv-tasnet") and nchannel == 1:
-                try:
-                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
-                    clean = torch.cat(tensors=[clean, clean], dim=1)
-                except AttributeError:
-                    # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
-                    mixture = torch.cat(tensors=[mixture, mixture], dim=1)
-                    clean = torch.cat(tensors=[clean, clean], dim=1)
+            # filter based on SNR 
+            if self.file_name_list:                     
+                if name[0] not in self.file_name_list:
+                    continue
 
-            if self.config.model.name not in ("demucs", "conv-tasnet"):
-                mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
+            nbatch, nchannel, nsample = mixture.shape
+            num_spk = sources.shape[1]
 
-            enhanced = evaluate(mixture=mixture, model=self.model, device=self.device, config=self.config)
+            # mono channel to stereo for source separation models
+            assert self.config.model.audio_channels == nchannel, f"Channel between {self.config.dset.name} and {self.config.model.name} did not match..."
+            assert self.config.model.num_spk == num_spk, f"number of speakers between {self.config.dset.name} and {self.config.model.name} did not match..."
 
-            if self.config.model.name in ("demucs", "conv-tasnet"):
-                enhanced = torch.squeeze(enhanced, dim=1)
+            if self.config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
+                assert num_spk == len(self.config.model.sources), f"number of speakers between {self.config.dset.name} and {self.config.model.name} did not match..."
 
-            if self.config.model.name not in ("demucs", "conv-tasnet"):
-                mixture = torch.reshape(mixture, shape=(batch, nchannel, nsample))
-                enhanced = torch.reshape(enhanced, shape=(batch, nchannel, nsample))
+            # if not source separation models, merge batch and channels
+            if self.config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
+                mixture = torch.reshape(mixture, shape=(nbatch*nchannel, 1, nsample))
+                        
+            enhanced = evaluate(mixture=mixture, model=self.model, device=self.device, config=self.config) 
 
-            loss: torch.Tensor = self.loss_function(clean, enhanced)
+            if self.config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
+                mixture = torch.reshape(mixture, shape=(nbatch, nchannel, nsample))
+                enhanced = torch.reshape(enhanced, shape=(nbatch, nchannel, nsample))
+            
+            if self.config.optim.pit and num_spk >= 2:
+                with torch.no_grad():
+                    index_enhance, index_target = PermutationInvariantTraining(enhance=enhanced.detach().clone(),
+                                                                target=sources.detach().clone(),
+                                                                loss_function=self.loss_function)
+                enhanced = enhanced[:, index_enhance, ...]
+                sources = sources[:, index_target, ...]
+            elif self.config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
+                enhanced = enhanced[:, 0]
+                sources = sources[:, 0]
+            elif self.config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
+                sources = torch.squeeze(sources, dim=1)
+
+            loss: torch.Tensor = self.loss_function(sources, enhanced)
             loss = loss.detach().item()
             loss_total += loss
-            
-            assert clean.shape == mixture.shape == enhanced.shape
+
+            assert sources.shape == enhanced.shape == mixture.shape
 
             mixture = mixture.detach().cpu()
-            clean = clean.detach().cpu()
+            sources = sources.detach().cpu()
             enhanced = enhanced.detach().cpu()
-            score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=clean)
+            score, score_reference = self.compute_metric(mixture=mixture, enhanced=enhanced, clean=sources)
 
             for metric_name, metric_value in score.items():
                 self.score_inference[metric_name] += metric_value    
             for metric_name, metric_value in score_reference.items():
                 self.score_inference_reference[metric_name] += metric_value  
             
-            self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=clean, name=name[0], epoch=epoch)            
+            self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=sources, name=name[0], epoch=epoch)            
 
-            if LIB_CLARITY and self.config.default.dset.name == 'Clarity':
+            if LIB_CLARITY and self.config.dset.name == 'Clarity':
                 self.compute_metric_clarity(mixture=mixture, enhanced=enhanced, length=origial_length, name=name[0])
                 tepoch.set_postfix(loss=loss, metric=np.mean(self.score_inference[self.config.solver.test.metric]), metric2=np.mean(self.score_inference["haspi"]))
             else:
@@ -615,9 +589,9 @@ class Solver(object):
         enhanced_one_sequence = enhanced_one_sequence.view(nchannel*batch*nsamples) 
         clean_one_sequence = clean_one_sequence.view(nchannel*batch*nsamples) 
     
-        self.writer.add_audio(f"Speech/{name}_mixture", mixture_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
-        self.writer.add_audio(f"Speech/{name}_Enhanced", enhanced_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
-        self.writer.add_audio(f"Speech/{name}_Clean", clean_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        # self.writer.add_audio(f"Speech/{name}_mixture", mixture_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        # self.writer.add_audio(f"Speech/{name}_Enhanced", enhanced_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
+        # self.writer.add_audio(f"Speech/{name}_Clean", clean_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
         
         mixture_one_sequence = mixture_one_sequence.numpy()
         enhanced_one_sequence = enhanced_one_sequence.numpy()
@@ -656,7 +630,7 @@ class Solver(object):
         self.writer.add_figure(f"Spectrogram/{name}", fig, epoch)
         self.num_visualization += 1
 
-        del fig, axes
+        # del fig, axes
 
     def compute_metric(self, mixture, enhanced, clean):
         metric_name = list(self.metric.keys())
@@ -680,7 +654,7 @@ class Solver(object):
     def compute_metric_clarity(self, mixture, enhanced, length, name):
         assert mixture.shape[0] == 1, "Clarity batch can only 1..."
     
-        cfg = OmegaConf.load(self.config.default.dset.config)
+        cfg = OmegaConf.load(self.config.default.config)
         scene = name.split("_")[0]
 
         enhanced_resample = enhanced.clone().detach()

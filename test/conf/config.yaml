@@ -1,11 +1,9 @@
 default:
-  # dset: 
-  #   name: 'VoiceBankDEMAND'
-  #   config:
-  dset: 
-    name: 'Clarity'
-    config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
-  
+  config:
+  # config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
+
+seed: 10    
+
 dummy:
 misc:
   num_workers: 1
@@ -20,48 +18,77 @@ optim:
   lr: 0.0003
   beta1: 0.9
   beta2: 0.999
-  loss: 'l1'
-  # loss: 'mse'
+  # loss: 'l1'
+  loss: 'mse'
   # loss: 'psa'
   # loss: 'psa-bose'
   # loss: 'ideal-mag'
+  # loss: 'si-sdr'
   clip_grad: False
+  pit: True
 
 model:
-  # wav-unet, dcunet, demucs, conv-tasnet,
-  # [X] mel-rnn, crn, dccrn
+  # wav-unet, dcunet, demucs, unet, mel-rnn, crn, dccrn, conv-tasnet
   name: 'conv-tasnet'
-  input_channels: 1
+  audio_channels: 1
+  num_spk: 1
   segment: 1.024
   sample_rate: 16000
   n_fft: 512
   hop_length: 256
   win_length: 512
   center: True
+  
+  # DNN
+  n_layers: 4 
+  hidden_layer: 1024
+  bias: True
+  activation: "leaky-relu"
+  drop_out: 0.5
+  dnn_method: "mask"
+  dnn_ema: True
+
+  # Unet(CNN)
+  unet_channels: 1
+  unet_layer: 4
+  bilinear: False
+
   # Mel-RNN
   rnn_type: 'rnn'
-  rnn_layer: 256
-  n_mels: 128
+  rnn_hidden: 256
+  rnn_layer: 2
+  n_mels: 0 # 128
   f_min: 125
   f_max: 8000
   ema: True
+  
   # DCUnet
   model_complexity: 45
   model_depth: 10 
   data_type: True 
   padding_mode: 'zeros'
+  
   # Unet
   unet_nlayers: 12
   channels_interval: 24
+  
   # CRN
   # n_fft: 320
   # hop_length: 160
   # win_length: 320
+  
   # Demucs
   sources: [None]
+
+  # Conv-tasnet
+  # sources: [None, None]
+  # skip: False
+
     
 dset:
+  # name: 'VoiceBankDEMAND'
   # wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  name: 'Clarity'
   wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
   split: [0.85, 0.1, 0.05]
   segment: 1.024  
@@ -70,10 +97,9 @@ dset:
   sample_rate: 16000
   norm: 'z-score'
   # norm: 'linear-scale'
-  channels: 1
   
 solver:
-  root: '.'
+  root: './test'
   num_workers: 10
   epochs: 1
   batch_size: 16
@@ -95,6 +121,3 @@ solver:
   
   # best: False
   # save: True 
-  
-name: "dcunet"
-seed: 10

@@ -1,6 +1,11 @@
 import torch
 import torch.nn.functional as nn
 
+MULTI_SPEECH_SEPERATION_MODELS = ("demucs", "conv-tasnet")
+MULTI_CHANNEL_SEPERATION_MODELS = ("demucs", "conv-tasnet", "unet")
+MONARCH_SPEECH_SEPARTAION_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet", "dccrn", "wav-unet")
+STFT_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet")
+WAV_MODELS = ("dccrn", "demucs", "conv-tasnet", "wav-unet")
 
 def evaluate(mixture, model, device, config):
     """
@@ -15,8 +20,8 @@ def evaluate(mixture, model, device, config):
             input_batch = (input_batch-mean_mixture) / (std_mixture + 1e-6)
         
         if config.dset.norm == "linear-scale":
-            max_mixture = torch.max(input_batch, dim=-1, keepdim=True)
-            min_mixture = torch.min(input_batch, dim=-1, keepdim=True)
+            max_mixture = torch.max(input_batch, dim=-1, keepdim=True).values
+            min_mixture = torch.min(input_batch, dim=-1, keepdim=True).values
             input_batch = (input_batch-min_mixture) / (max_mixture - min_mixture + 1e-6)
 
         # segment 
@@ -25,10 +30,10 @@ def evaluate(mixture, model, device, config):
         input_batch = _prepare_input_wav_zero_filled(input_batch, num_feature, stride=stride)
 
         # merge segment, batch
-        num_segment, batch, nchannel, nsample = input_batch.shape
-        input_batch = input_batch.reshape(num_segment*batch, nchannel, nsample)
-        if config.model.name in ("mel-rnn", "dcunet", "crn"):
-            input_batch = _stft(input_batch, config)
+        num_segment, nbatch, nchannel, nsample = input_batch.shape
+        input_batch = input_batch.reshape(num_segment*nbatch, nchannel, nsample)
+        if config.model.name in STFT_MODELS:
+            input_batch = stft_custom(input_batch, config)
 
         # model
         if model:
@@ -57,13 +62,22 @@ def evaluate(mixture, model, device, config):
         else:
             output = input_batch
 
-        if config.model.name in ("mel-rnn", "dcunet", "crn"):
-            output = _istft(output, config)
-        
-        output = output.reshape(num_segment, batch, nchannel, nsample)
+        if config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
+            output = torch.unsqueeze(output, dim=1)
 
-        shape = list(mixture.shape)
-        shape = shape[:-1] + [num_feature + stride*(output.shape[0]-1)]
+        if config.model.name in STFT_MODELS:
+            output = istft_custom(output, config)
+        
+        if config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
+            num_sources = len(config.model.sources)
+            output = output.reshape(num_segment, nbatch, num_sources, nchannel, nsample)
+            shape = list(mixture.shape)
+            shape = shape[:-2] + [num_sources, shape[-2]] + [num_feature + stride*(output.shape[0]-1)]
+        else:
+            output = output.reshape(num_segment, nbatch, nchannel, nsample)
+            shape = list(mixture.shape)
+            shape = shape[:-1] + [num_feature + stride*(output.shape[0]-1)]
+        
         enhanced = torch.zeros(size=shape, dtype=mixture.dtype)
         enhanced[..., :num_feature] = output[0, ...]
         for ibatch in range(output.shape[0]-1):
@@ -81,12 +95,15 @@ def evaluate(mixture, model, device, config):
     return enhanced
 
 
-def _stft(tensor: torch.Tensor, config):
-    batch, nchannel, nsample = tensor.size()
-
-    tensor = tensor.reshape(batch*nchannel, nsample)
-
-    tensor = torch.stft(input=tensor,
+def stft_custom(tensor: torch.Tensor, config):
+    if len(tensor.size()) == 3:
+        nbatch, nchannel, nsample = tensor.size()
+    elif len(tensor.size()) == 4:
+        nbatch, nspk, nchannel, nsample = tensor.size()
+    
+    tensor = tensor.contiguous()
+    tensor_stft = tensor.view(-1, nsample)
+    tensor_stft = torch.stft(input=tensor_stft,
                     n_fft=config.model.n_fft,
                     hop_length=config.model.hop_length,
                     win_length=config.model.win_length,
@@ -97,19 +114,30 @@ def _stft(tensor: torch.Tensor, config):
                     onesided=None,
                     return_complex=False,
                     )
-    tensor /= config.model.win_length
-    _, nfeature, nframe, ndtype = tensor.size()
-    tensor = tensor.reshape(batch, nchannel, nfeature, nframe, ndtype)
-    return tensor
+    tensor_stft /= config.model.win_length
+    _, nfeature, nframe, ndtype = tensor_stft.size()
 
-def _istft(tensor: torch.Tensor, config):
-    batch, nchannel, nfeature, nframe, ndtype = tensor.size()
-    tensor *= config.model.win_length
-    tensor = tensor.reshape(batch*nchannel, nfeature, nframe, ndtype)
-    tensor_complex = torch.complex(real=tensor[..., 0], imag=tensor[..., 1])
+    if len(tensor.size()) == 3:
+        tensor_stft = tensor_stft.reshape(nbatch, nchannel, nfeature, nframe, ndtype)
+    elif len(tensor.size()) == 4:
+        tensor_stft = tensor_stft.reshape(nbatch, nspk, nchannel, nfeature, nframe, ndtype)
+
+    return tensor_stft
+
+def istft_custom(tensor: torch.Tensor, config):
+    tensor_istft = tensor*config.model.win_length
+
+    if len(tensor.size()) == 5:
+        nbatch, nchannel, nfeature, nframe, ndtype = tensor_istft.size()
+    elif len(tensor.size()) == 6:
+        nbatch, nspk, nchannel, nfeature, nframe, ndtype = tensor_istft.size()
+
+    tensor_istft = tensor_istft.contiguous()
+    tensor_istft = tensor_istft.view(-1, nfeature, nframe, ndtype)        
+    tensor_istft_complex = torch.complex(real=tensor_istft[..., 0], imag=tensor_istft[..., 1])
     
-    tensor = torch.istft(
-        input=tensor_complex,
+    tensor_istft = torch.istft(
+        input=tensor_istft_complex,
         n_fft=config.model.n_fft,
         hop_length=config.model.hop_length,
         win_length=config.model.win_length,
@@ -120,9 +148,15 @@ def _istft(tensor: torch.Tensor, config):
         onesided=None,
         return_complex=False,
     )
-    _, nsample = tensor.size()
-    tensor = tensor.reshape(batch, nchannel, nsample)
-    return tensor
+    nsample = tensor_istft.size()[-1]
+    _, nsample = tensor_istft.size()
+
+    if len(tensor.size()) == 5:
+        tensor_istft = tensor_istft.reshape(nbatch, nchannel, nsample)
+    elif len(tensor.size()) == 6:
+        tensor_istft = tensor_istft.reshape(nbatch, nspk, nchannel, nsample)
+        
+    return tensor_istft
 
 def _prepare_input_wav_zero_filled(wav, num_feature, stride):
     assert wav.shape[-1] >= num_feature, "the length of data is too short comparing the number of features..."

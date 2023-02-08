@@ -16,10 +16,11 @@ class DCCRN(nn.Module):
                     win_len=400,
                     win_inc=100, 
                     fft_len=512,
+                    length=16384,
                     win_type='hann',
                     masking_mode='E',
-                    use_clstm=False,
-                    use_cbn = False,
+                    use_clstm=True,
+                    use_cbn = True,
                     kernel_size=5,
                     kernel_num=[16,32,64,128,256,256],
                     *args,
@@ -59,7 +60,7 @@ class DCCRN(nn.Module):
         fix=True
         self.fix = fix
         self.stft = ConvSTFT(self.win_len, self.win_inc, fft_len, self.win_type, 'complex', fix=fix)
-        self.istft = ConviSTFT(self.win_len, self.win_inc, fft_len, self.win_type, 'complex', fix=fix)
+        self.istft = ConviSTFT(self.win_len, self.win_inc, fft_len, length, self.win_type, 'complex', fix=fix)
         
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
@@ -222,10 +223,9 @@ class DCCRN(nn.Module):
         out_spec = torch.cat([real, imag], 1) 
         out_wav = self.istft(out_spec)
          
-        out_wav = torch.squeeze(out_wav, 1)
+        # out_wav = torch.squeeze(out_wav, 1)
         #out_wav = torch.tanh(out_wav)
         out_wav = torch.clamp_(out_wav,-1,1)
-        # return out_spec,  out_wav
         return out_wav
 
     def get_params(self, weight_decay=0.0):
@@ -244,23 +244,6 @@ class DCCRN(nn.Module):
                      'weight_decay': 0.0,
                  }]
         return params
-
-    def loss(self, inputs, labels, loss_mode='SI-SNR'):
-       
-        if loss_mode == 'MSE':
-            b, d, t = inputs.shape 
-            labels[:,0,:]=0
-            labels[:,d//2,:]=0
-            return F.mse_loss(inputs, labels, reduction='mean')*d
-
-        elif loss_mode == 'SI-SNR':
-            #return -torch.mean(si_snr(inputs, labels))
-            return -(si_snr(inputs, labels))
-        elif loss_mode == 'MAE':
-            gth_spec, gth_phase = self.stft(labels) 
-            b,d,t = inputs.shape 
-            return torch.mean(torch.abs(inputs-gth_spec))*d
-
 
 
 class cPReLU(nn.Module):
@@ -719,19 +702,19 @@ class ConvSTFT(nn.Module):
 
 class ConviSTFT(nn.Module):
 
-    def __init__(self, win_len, win_inc, fft_len=None, win_type='hamming', feature_type='real', fix=True):
+    def __init__(self, win_len, win_inc, fft_len=None, length=None, win_type='hamming', feature_type='real', fix=True):
         super(ConviSTFT, self).__init__() 
         if fft_len == None:
             self.fft_len = np.int(2**np.ceil(np.log2(win_len)))
         else:
             self.fft_len = fft_len
+        self.length = length
         kernel, window = init_kernels(win_len, win_inc, self.fft_len, win_type, invers=True)
         #self.weight = nn.Parameter(kernel, requires_grad=(not fix))
         self.register_buffer('weight', kernel)
         self.feature_type = feature_type
         self.win_type = win_type
         self.win_len = win_len
-        self.stride = win_inc
         self.stride = win_inc
         self.dim = self.fft_len
         self.register_buffer('window', window)
@@ -754,7 +737,12 @@ class ConviSTFT(nn.Module):
         coff = F.conv_transpose1d(t, self.enframe, stride=self.stride)
         outputs = outputs/(coff+1e-8)
         #outputs = torch.where(coff == 0, outputs, outputs/coff)
-        outputs = outputs[...,self.win_len-self.stride:-(self.win_len-self.stride)]
+        
+        if self.length:
+            outputs = outputs[...,self.win_len-self.stride:]
+            outputs = outputs[...,:self.length]
+        else:
+            outputs = outputs[...,self.win_len-self.stride:-(self.win_len-self.stride)]
         
         return outputs
 
@@ -784,11 +772,11 @@ if __name__ == "__main__":
     parser.add_argument("--rnn_units", default=2, type=int)
     parser.add_argument("--n_fft", default=512, type=int)
     parser.add_argument("--window_length", default=400, type=int)
-    parser.add_argument("--hop_length", default=256, type=int)
+    parser.add_argument("--hop_length", default=100, type=int)
     parser.add_argument("--window_type", default="hann", type=str)
     parser.add_argument("--dccrn_masktype", default="E", type=str)
-    parser.add_argument("--dccrn_used_clstm", default="E", type=str)
-    parser.add_argument("--dccrn_used_cbn", default="E", type=str)
+    parser.add_argument("--dccrn_used_clstm", default=True, type=str)
+    parser.add_argument("--dccrn_used_cbn", default=True, type=str)
     parser.add_argument("--dccrn_kernel_size", default=5, type=int)
     parser.add_argument("--device", default="cpu", type=str)
 
@@ -798,20 +786,22 @@ if __name__ == "__main__":
                         rnn_units=args.rnn_units,
                         win_len=args.window_length,
                         win_inc=args.hop_length,
+                        fft_len=args.n_fft,
+                        length=int(args.sample_rate*args.segment),
                         win_type=args.window_type,
                         masking_mode=args.dccrn_masktype,
                         use_clstm=args.dccrn_used_clstm,
                         use_cbn=args.dccrn_used_cbn,
                         kernel_size=args.dccrn_kernel_size,
-                        kernel_num=[16,32,64,128,256,256],).to(args.device)
-
+                        kernel_num=[32,64,128,128,256,256],).to(args.device)
+    # [16,32,64,128,256,256]
+    # [32,64,128,128,256,256]
     length = int(args.sample_rate*args.segment) 
     print(f"Input wav length: {length}")
-    x = torch.randn(1, length).to(args.device)
-    # out_spec,  out_wav = model(x[None])
-    # print(f"Out: spectrum. {out_spec.shape}, wav. {out_wav.shape}")
+    x = torch.randn(args.input_channels, length).to(args.device)
     out_wav = model(x[None])
-    print(f"Out: wav. {out_wav.shape}")
+    print(f"Out: wav {out_wav.shape}")
+
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")
     

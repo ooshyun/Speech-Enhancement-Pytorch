@@ -1,3 +1,8 @@
+"""
+sources (num_spk, num_channel, num_samples)
+mixture (num_channel, num_samples)
+
+"""
 import os
 import numpy as np
 import glob
@@ -16,6 +21,7 @@ from torch.nn.functional import pad
 import typing as tp
 from .dataset import WavDataset, ClarityWavDataset
 from .utils import find_folder, obj2dict, split_list
+from .loss import loss_sisdr
 
 from .model.conv_tasnet import ConvTasNet
 from .model.crn import CRN
@@ -24,61 +30,70 @@ from .model.dcunet import DCUnet
 from .model.demucs import Demucs
 from .model.wav_unet import WavUnet
 from .model.mel_rnn import MelRNN
+from .model.dnn import DeepNeuralNetwork
+from .model.unet import UNet
 
 def collate_fn_pad(config, drop_last=True):
     def _collate_fn_pad(batch):
-        mixture_list = []
-        clean_list = []
+        batch_mixture = []
         mixture_metadata_list = []
-        clean_metadata_list = []
+
+        batch_sources = []
+        sources_metadata_list = []
+
         names = []
         index_batch = []
 
         for one_batch in batch:
-            mixture, clean, mixture_metadata, clean_metadata, name = one_batch
+            mixture, sources, mixture_metadata, sources_metadata, name = one_batch
+      
             mixture_metadata_list.append(mixture_metadata)
-            clean_metadata_list.append(clean_metadata)
-
+            sources_metadata_list.append(sources_metadata)
+            
             segment_length = int(config.segment * config.sample_rate)
 
             if drop_last and mixture.size()[-1] % segment_length != 0 and mixture.size()[-1] > segment_length:
                 mixture = mixture[...,:segment_length*int(mixture.size()[-1]//segment_length)]
-                clean = clean[...,:segment_length*int(mixture.size()[-1]//segment_length)]
+                sources = sources[...,:segment_length*int(mixture.size()[-1]//segment_length)]
+            
             elif not drop_last and mixture.size()[-1] % segment_length != 0 and mixture.size()[-1] > segment_length:
                 npad = int(mixture.size()[-1]//segment_length+1)*segment_length - mixture.size()[-1]
                 mixture = pad(mixture, pad=(0, npad), mode="constant", value=0)
-                clean = pad(clean, pad=(0, npad), mode="constant", value=0)
+                sources = pad(sources, pad=(0, npad), mode="constant", value=0)
+            
             elif mixture.size()[-1] < segment_length:
                 npad = mixture.size()[-1] - segment_length
                 mixture = pad(mixture, pad=(0, npad), mode="constant", value=0)
-                clean = pad(clean, pad=(0, npad), mode="constant", value=0)
-
-            channel, length = mixture.size()
+                sources = pad(sources, pad=(0, npad), mode="constant", value=0)
+            
+            num_channel, length = mixture.size()
             nsegment = int(length // segment_length)
-            mixture = mixture.view(channel, nsegment, segment_length)
-            clean = clean.view(channel, nsegment, segment_length)
+            mixture = mixture.view(num_channel, nsegment, segment_length)
 
-            mixture_list.append(mixture) 
-            clean_list.append(clean)
+            num_spk = sources.size()[0]
+            sources = sources.view(num_spk, num_channel, nsegment, segment_length)
+            
+            batch_mixture.append(mixture) 
+            batch_sources.append(sources)
+            
             names.append(name)
             index_batch.append(mixture.size()[1])
             
-            assert mixture.size() == clean.size()
+            assert mixture.size() == sources.size()[1:]
 
         # seq_list = [(T1, nsample), (T2, nsample), ...]
         #   item.size() must be (T, *)
         #   return (longest_T, len(seq_list), *)
         # list = pad_sequence(list)
-        
+
         try:
-            mixture_list = torch.concat(mixture_list, dim=1).permute(1, 0, 2)
-            clean_list = torch.concat(clean_list, dim=1).permute(1, 0, 2)
+            batch_mixture = torch.concat(batch_mixture, dim=1).permute(1, 0, 2)
+            batch_sources = torch.concat(batch_sources, dim=2).permute(2, 0, 1, 3)
         except AttributeError:
             # For torch 1.7.1, AttributeError: module 'torch' has no attribute 'concat'
-            mixture_list = torch.cat(mixture_list, dim=1).permute(1, 0, 2)
-            clean_list = torch.cat(clean_list, dim=1).permute(1, 0, 2)
-
-        return mixture_list, clean_list, mixture_metadata_list, clean_metadata_list, names, index_batch
+            batch_mixture = torch.cat(batch_mixture, dim=1).permute(1, 0, 2)
+            batch_sources = torch.cat(batch_sources, dim=2).permute(2, 0, 1, 3)
+        return batch_mixture, batch_sources, mixture_metadata_list, sources_metadata_list, names, index_batch
     return _collate_fn_pad
 
 def get_train_wav_voicebankdemand(config):
@@ -160,13 +175,13 @@ def get_train_wav_clarity(config):
 
     return train_dataset, validation_dataset, test_dataset
 
-def get_train_wav_dataset(config, name):
-    if name == "VoiceBankDEMAND":
+def get_train_wav_dataset(config):
+    if config.name == "VoiceBankDEMAND":
         train_dataset, validation_dataset, test_dataset = get_train_wav_voicebankdemand(config)
-    elif name == "Clarity":
+    elif config.name == "Clarity":
         train_dataset, validation_dataset, test_dataset = get_train_wav_clarity(config)
     else:
-        raise ValueError(f"{name} dataset is not implemented")
+        raise ValueError(f"{config.name} dataset is not implemented")
 
     return train_dataset, validation_dataset, test_dataset
 
@@ -188,7 +203,9 @@ def get_dataloader(datasets: tp.List[Dataset], config, train=True) -> tp.List[Da
 
 def get_model(config):
     klass = {
+            'dnn': DeepNeuralNetwork,
             'mel-rnn': MelRNN,
+            'unet': UNet,
             'dccrn': DCCRN,
             'dcunet': DCUnet,
             'demucs': Demucs,
@@ -225,6 +242,8 @@ def get_loss_function(config):
         loss_function = torch.nn.functional.l1_loss
     elif config.loss == "mse":
         loss_function = torch.nn.functional.mse_loss
+    elif config.loss == "si-sdr":
+        loss_function = loss_sisdr
     # elif config.loss == 'psa':
     #     from loss import phase_sensitive_approximate_loss
     #     loss_function = phase_sensitive_approximate_loss

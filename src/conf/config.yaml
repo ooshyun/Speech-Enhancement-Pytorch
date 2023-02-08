@@ -4,8 +4,10 @@ default:
   #   config:
   dset: 
     name: 'Clarity'
-    config: './recipes/icassp_2023/MLbaseline/config.yaml'
-  
+    config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
+
+seed: 10
+
 dummy:
 misc:
   num_workers: 1
@@ -25,42 +27,73 @@ optim:
   # loss: 'psa'
   # loss: 'psa-bose'
   # loss: 'ideal-mag'
+  # loss: 'si-sdr'
   clip_grad: False
+  pit: False
 
 model:
-  # wav-unet, dcunet, demucs, conv-tasnet,
-  # [X] mel-rnn, crn, dccrn
+  # wav-unet, dcunet, demucs, dccrn, mel-rnn, crn, conv-tasnet
   name: 'conv-tasnet'
-  input_channels: 1
+  audio_channels: 2
+  num_spk: 2
   segment: 1.024
   sample_rate: 16000
   n_fft: 512
-  hop_length: 256
+  hop_length: 128
   win_length: 512
   center: True
+  
+  # DNN
+  n_layers: 4 
+  hidden_layer: 1024
+  bias: True
+  activation: "leaky-relu"
+  drop_out: 0.5
+  dnn_method: "mask"
+  dnn_ema: True
+
+  # Unet
+  unet_channels: 1
+  unet_layer: 4
+  bilinear: False
+
   # Mel-RNN
-  rnn_type: 'rnn'
-  rnn_layer: 256
-  n_mels: 128
+  rnn_type: 'lstm'
+  rnn_hidden: 1024
+  rnn_layer: 1
+  n_mels: 0 # 128
   f_min: 125
   f_max: 8000
   ema: True
+  
+  
   # DCUnet
   model_complexity: 45
   model_depth: 10 
   data_type: True 
   padding_mode: 'zeros'
-  # Unet
-  unet_nlayers: 24
-  channels_interval: 12
+  
+  # Wav-Unet
+  unet_nlayers: 12
+  channels_interval: 24
+  
   # CRN
-  n_fft: 320
-  hop_length: 160
-  win_length: 320
+  # n_fft: 320
+  # hop_length: 160
+  # win_length: 320
+  
   # Demucs
-  sources: [None]
-
+  # sources: [None]
+  
+  # DCCRN 
+  # default [16,32,64,128,256,256] 
+  # paper [32,64,128,128,256,256]
+  kernel_num: [16,32,64,128,256,256]
     
+  # Conv-tasnet
+  sources: [None, None]
+  skip: False
+
 dset:
   # wav: './data/VoiceBankDEMAND/DS_10283_2791'
   wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
@@ -77,12 +110,12 @@ solver:
   root: '.'
   num_workers: 10
   epochs: 400
-  batch_size: 16
+  batch_size: 4
   all_steps: False
-  total_steps: 2000
+  total_steps: 5000
   save_checkpoint_interval: 5
   patience: 40
-  resume:
+  resume: './result/conv-tasnet/20230207-234031'
   preloaded_model:
   cudnn_deterministic: True
   validation: 
@@ -93,9 +126,3 @@ solver:
     interval: 40
     num_show: 10
     metric: 'sisdr' # loss, stoi, pesq, sisdr
-  
-  # best: False
-  # save: True 
-  
-name: "conv-tasnet"
-seed: 10

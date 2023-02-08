@@ -7,7 +7,7 @@ import torch.nn as nn
 
 class Encoder(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding=None, complex=False, padding_mode="zeros"):
-        super().__init__()
+        super(Encoder, self).__init__()
         if padding is None:
             padding = [(i - 1) // 2 for i in kernel_size]  # 'SAME' padding
             
@@ -31,7 +31,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding=(0, 0), complex=False):
-        super().__init__()
+        super(Decoder, self).__init__()
         if complex:
             tconv = ComplexConvTranspose2d
             bn = ComplexBatchNorm2d
@@ -56,9 +56,10 @@ class DCUnet(nn.Module):
                  model_complexity=45,
                  model_depth=20,
                  padding_mode="zeros",
+                 masking_mode="E",
                  *args,
                  **kwargs):
-        super().__init__()
+        super(DCUnet, self).__init__()
 
         if data_type:
             model_complexity = int(model_complexity // 1.414)
@@ -93,11 +94,15 @@ class DCUnet(nn.Module):
         self.add_module("linear", linear)
         self.data_type = data_type
         self.padding_mode = padding_mode
+        self.masking_mode = masking_mode
 
         self.decoders = nn.ModuleList(self.decoders)
         self.encoders = nn.ModuleList(self.encoders)
 
     def forward(self, x):
+        real = x[..., 0]
+        imag = x[..., 1]
+
         x = x.transpose(2, 3) # channel, F, T, real/imag -> # channel, T, F, real/imag
         if self.data_type:
             x = x
@@ -125,7 +130,37 @@ class DCUnet(nn.Module):
         mask = self.linear(p)
         mask = torch.tanh(mask)
         mask = mask.transpose(2, 3) # channel, T, F, real/imag -> # channel, F, T, real/imag
-        return mask
+        
+        # masking method
+        # https://github.com/huyanxin/DeepComplexCRN
+        x_mag = torch.sqrt(real**2+imag**2+1e-8)
+        x_phase = torch.atan2(imag, real)
+
+        mask_real = mask[..., 0]
+        mask_imag = mask[..., 1] 
+        
+        if self.masking_mode == 'E' :
+            mask_mags = (mask_real**2+mask_imag**2)**0.5
+            real_phase = mask_real/(mask_mags+1e-8)
+            imag_phase = mask_imag/(mask_mags+1e-8)
+            mask_phase = torch.atan2(
+                            imag_phase,
+                            real_phase
+                        ) 
+            #mask_mags = torch.clamp_(mask_mags,0,100) 
+            mask_mags = torch.tanh(mask_mags)
+            est_mags = mask_mags*x_mag 
+            est_phase = x_phase + mask_phase
+            real = est_mags*torch.cos(est_phase)
+            imag = est_mags*torch.sin(est_phase) 
+        elif self.masking_mode == 'C':
+            real,imag = real*mask_real-imag*mask_imag, real*mask_imag+imag*mask_real
+        elif self.masking_mode == 'R':
+            real, imag = real*mask_real, imag*mask_imag 
+        
+        out = torch.stack(tensors=[real, imag], dim=-1) 
+
+        return out
 
     def set_size(self, model_complexity, model_depth=20, input_channels=1):
         if model_depth == 10:
@@ -274,7 +309,7 @@ class DCUnet(nn.Module):
 class ComplexConv2d(nn.Module):
     # https://github.com/litcoderr/ComplexCNN/blob/master/complexcnn/modules.py
     def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, **kwargs):
-        super().__init__()
+        super(ComplexConv2d, self).__init__()
 
         ## Model components
         self.conv_re = nn.Conv2d(in_channel, out_channel, kernel_size, stride=stride, padding=padding,
@@ -291,7 +326,7 @@ class ComplexConv2d(nn.Module):
 
 class ComplexConvTranspose2d(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding=0, output_padding=0, dilation=1, groups=1, bias=True, **kwargs):
-        super().__init__()
+        super(ComplexConvTranspose2d, self).__init__()
 
         ## Model components
         self.tconv_re = nn.ConvTranspose2d(in_channel, out_channel,
@@ -323,7 +358,7 @@ class ComplexConvTranspose2d(nn.Module):
 class ComplexBatchNorm2d(nn.Module):
     def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True,
                  track_running_stats=True, **kwargs):
-        super().__init__()
+        super(ComplexBatchNorm2d, self).__init__()
         self.bn_re = nn.BatchNorm2d(num_features=num_features, momentum=momentum, affine=affine, eps=eps, track_running_stats=track_running_stats, **kwargs)
         self.bn_im = nn.BatchNorm2d(num_features=num_features, momentum=momentum, affine=affine, eps=eps, track_running_stats=track_running_stats, **kwargs)
 
@@ -338,7 +373,7 @@ class Amplitude(nn.Module):
     def __init__(self,
                 *args,
                 **kwarg):
-        super().__init__()
+        super(Amplitude, self).__init__()
     def forward(self, inputs):
         assert inputs.size()[-1] == 2, f"Tensor needs real and imag in the last rank..."
         return torch.abs(torch.pow(inputs[..., 0], exponent=2) - torch.pow(inputs[..., 1], exponent=2))
@@ -386,8 +421,12 @@ if __name__ == "__main__":
     nfeature = int(args.n_fft//2)+1
 
     x = torch.randn(1, nfeature, nframe, 2).to(args.device) # channel, F, T, real/imag
-    print("In: ", x.shape)
-    out = model(x[None])
+    if args.input_channels == 1:
+        batch = x[None]
+    elif args.input_channels == 2:
+        batch = torch.concat([x[None], x[None]], dim=1)
+    print("In: ", batch.shape)
+    out = model(batch)
     print("Out: ", out.shape)
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")

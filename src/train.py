@@ -14,7 +14,7 @@ from .distrib import (
 import warnings
 from .solver import Solver
 
-def main(path_config):
+def main(path_config, return_solver=False):
     config = load_yaml(path_config)
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
@@ -61,4 +61,7 @@ def main(path_config):
         test_dataloader=test_dataloader,
     )
 
-    solver.train()
+    if return_solver:
+        return solver
+    else:
+        solver.train()
