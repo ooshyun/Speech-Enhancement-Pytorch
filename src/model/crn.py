@@ -1,4 +1,6 @@
 """
+[TODO] X, out nan
+
 https://github.com/haoxiangsnr/A-Convolutional-Recurrent-Neural-Network-for-Real-Time-Speech-Enhancement/
 """
 import torch
@@ -98,17 +100,17 @@ class CRN(nn.Module):
             self.lstm_layer.flatten_parameters() # ?
         amplitude = torch.sqrt(torch.pow(x[..., 0], 2.) - torch.pow(x[..., 1], 2.))
 
-        print(amplitude.shape)
+        # print(amplitude.shape)
         e_1 = self.conv_block_1(amplitude)
-        print(e_1.shape)
+        # print(e_1.shape)
         e_2 = self.conv_block_2(e_1)
-        print(e_2.shape)
+        # print(e_2.shape)
         e_3 = self.conv_block_3(e_2)
-        print(e_3.shape)
+        # print(e_3.shape)
         e_4 = self.conv_block_4(e_3)
-        print(e_4.shape)
+        # print(e_4.shape)
         e_5 = self.conv_block_5(e_4)  # [2, 256, 4, 200]
-        print(e_5.shape)
+        # print(e_5.shape)
 
         if self.use_lstm:
             batch_size, n_channels, n_f_bins, n_frame_size = e_5.shape

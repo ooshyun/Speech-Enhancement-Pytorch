@@ -30,7 +30,7 @@ class ModelSanityCheck(unittest.TestCase):
 
 
         model_list = ['dnn',    # O
-                     'unet',    # TODO: grad is NoneType
+                     'unet',    # O
                      'mel-rnn', # O
                      'dccrn',  # TODO: Test since GPU is using fully
                      'dcunet', # O
@@ -39,11 +39,9 @@ class ModelSanityCheck(unittest.TestCase):
                      'conv-tasnet', # O, gpu 19421MiB -> decrease size 
                      'crn', # TODO: X, out nan
                      ]
-        index_model = -2
-        index_model = 2
-
+        index_model = -1
+        # index_model = 2
         config.model.name = model_list[index_model]
-                     
         model = get_model(config.model)
         optimizer = get_optimizer(config.optim, model)
         loss_function = get_loss_function(config.optim)

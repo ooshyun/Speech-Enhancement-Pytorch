@@ -2,9 +2,6 @@
 Code format from,
 https://github.com/milesial/Pytorch-UNet/blob/master/unet/unet_parts.py
 """
-
-""" Full assembly of the parts to form the complete network """
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -108,15 +105,18 @@ class Up(nn.Module):
 
     def __init__(self, in_channels, out_channels, bilinear=True, first=False, last=False):
         super(Up, self).__init__()
+        self.first = first
         self.in_channels = in_channels
         self.out_channels = out_channels
         
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            if not self.first:
+                self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
             self.conv = DoubleConv(in_channels+out_channels, out_channels, in_channels // 2)
         else:
-            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)  
+            if not self.first:
+                self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)  
             
             if first:
                 in_channels_conv = in_channels + out_channels  
@@ -127,7 +127,6 @@ class Up(nn.Module):
 
             self.conv = DoubleConv(in_channels_conv, out_channels)
 
-        self.first = first
 
     def forward(self, x1, x2):
         if not self.first:
@@ -138,10 +137,10 @@ class Up(nn.Module):
         assert x2.size()[2] >= x1.size()[2] and x2.size()[3] >= x1.size()[3]
         diffY = x2.size()[2] - x1.size()[2]
         diffX = x2.size()[3] - x1.size()[3]
-
+        print(x1.shape, x2.shape)
         x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
                         diffY // 2, diffY - diffY // 2])
-        # print(x1.shape, x2.shape)
+        print(x1.shape, x2.shape)
         
         x = torch.cat([x1, x2], dim=1)
         return self.conv(x)
