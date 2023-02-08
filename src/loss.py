@@ -18,14 +18,15 @@ def si_snr(s1, s2, eps=1e-8):
     return torch.mean(snr)
 
 def PermutationInvariantTraining(enhance, target: list, loss_function):
-    min_loss = 1e12
-    
+    # O(S^2), S= the number of speaker    
+    min_loss = 1e12    
     index_enhance, index_target = 0, 0
     for i in range(enhance.shape[1]):
-        for j in range(len(target)):
-            loss = loss_function(enhance[:, i, ...], target[j])
+        for j in range(target.shape[1]):
+            loss = loss_function(enhance[:, i, ...], target[:, j, ...])
             if loss < min_loss:
                 min_loss = loss
                 index_enhance, index_target = i, j
 
     return index_enhance, index_target
+

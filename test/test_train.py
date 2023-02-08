@@ -2,6 +2,8 @@ import unittest
 from src.train import (
     main
 )
+from src.utils import load_yaml
+from src.evaluate import stft_custom, istft_custom
 
 class TrainSanityCheck(unittest.TestCase):
     def test_train(self):
@@ -10,9 +12,9 @@ class TrainSanityCheck(unittest.TestCase):
         """
         main("./test/conf/config.yaml")
 
-    def test_solver_stft(self):
+    def test_stft(self):
         """
-        python -m unittest -v test.test_train.TrainSanityCheck.test_solver_stft
+        python -m unittest -v test.test_train.TrainSanityCheck.test_stft
         """
         import random
         import torch
@@ -33,8 +35,8 @@ class TrainSanityCheck(unittest.TestCase):
         np.random.seed(config.seed)
         random.seed(config.seed)
         
-        train_dataset, validation_dataset = get_train_wav_dataset(config.dset)
-        train_dataloader, validation_dataloader = get_dataloader(train_dataset, config), get_dataloader(validation_dataset, config)
+        train_dataset, validation_dataset, test_set = get_train_wav_dataset(config.dset)
+        train_dataloader, validation_dataloader = get_dataloader([train_dataset, validation_dataset], config)
 
                                     
         model = get_model(config.model)
@@ -51,26 +53,19 @@ class TrainSanityCheck(unittest.TestCase):
         )
 
         for batch_train in train_dataloader:
-            if len(batch_train) == 4:
-                mixture, clean, name, index = batch_train
-            else:
-                mixture, clean, mixture_metadata, clean_metadata, name, index = batch_train
+
+            mixture, sources, mixture_metadata, sources_metadata, name, index = batch_train
 
             n_batch = np.random.randint(low=0, high=mixture.shape[0])
 
-            mixture = mixture[n_batch, ...]
-            mixture = torch.unsqueeze(mixture, dim=0)
-            clean = clean[n_batch, ...]
-            clean = torch.unsqueeze(clean, dim=0)
+            print(mixture.shape, sources.shape)
+            mixture_stft = stft_custom(tensor=mixture, config=config)
+            sources_stft = stft_custom(tensor=sources, config=config)
+            print(mixture_stft.shape, sources_stft.shape)
 
-            print(mixture.shape, clean.shape)
-            mixture_stft = solver._stft(mixture)
-            clean_stft = solver._stft(clean)
-            print(mixture_stft.shape, clean_stft.shape)
-            
-            mixture_istft = solver._istft(mixture_stft)
-            clean_istft = solver._istft(clean_stft)
-            print(mixture_istft.shape, clean_istft.shape)
+            mixture_istft = istft_custom(tensor=mixture_stft, config=config)
+            sources_istft = istft_custom(tensor=sources_stft, config=config)
+            print(mixture_istft.shape, sources_istft.shape)
             
             # fig, (ax0, ax1) = plt.subplots(nrows=2)
             # ax0.plot(mixture_istft[0, 0])
@@ -78,7 +73,18 @@ class TrainSanityCheck(unittest.TestCase):
             # plt.show()
 
             print("[Mixture] Max diff: ", (mixture_istft-mixture).abs().max())
-            print("[Clean] Max diff: ", (clean_istft-clean).abs().max())
+            print("[Sources] Max diff: ", (sources_istft-sources).abs().max())
 
             assert (mixture_istft-mixture).abs().max() < 1e-5
+            break
             
+    def test_inference(self):
+        """
+        python -m unittest -v test.test_train.TrainSanityCheck.test_inference
+        """
+        path_config = "./test/conf/config.yaml"
+        solver = main(path_config=path_config, return_solver=True)
+        solver.config.solver.test.total_steps = 10
+        solver.inference(epoch=1, total_epoch=1)
+        score = solver.score_inference
+        print(score)

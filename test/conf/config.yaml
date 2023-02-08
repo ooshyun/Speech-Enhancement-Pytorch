@@ -1,11 +1,9 @@
 default:
-  dset: 
-    name: 'VoiceBankDEMAND'
-    config:
-  # dset: 
-  #   name: 'Clarity'
-  #   config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
-    
+  config:
+  # config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
+
+seed: 10    
+
 dummy:
 misc:
   num_workers: 1
@@ -30,10 +28,10 @@ optim:
   pit: True
 
 model:
-  # wav-unet, dcunet, demucs, unet
-  # [X] mel-rnn, crn, dccrn, conv-tasnet
-  name: 'unet'
-  input_channels: 1
+  # wav-unet, dcunet, demucs, unet, mel-rnn, crn, dccrn, conv-tasnet
+  name: 'conv-tasnet'
+  audio_channels: 1
+  num_spk: 1
   segment: 1.024
   sample_rate: 16000
   n_fft: 512
@@ -83,14 +81,15 @@ model:
   sources: [None]
 
   # Conv-tasnet
-  sources: [None] # [None, None]
-  skip: False
-  input_channels: 2
+  # sources: [None, None]
+  # skip: False
 
     
 dset:
-  wav: './data/VoiceBankDEMAND/DS_10283_2791'
-  # wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
+  # name: 'VoiceBankDEMAND'
+  # wav: './data/VoiceBankDEMAND/DS_10283_2791'
+  name: 'Clarity'
+  wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
   split: [0.85, 0.1, 0.05]
   segment: 1.024  
   use_all: False
@@ -98,7 +97,6 @@ dset:
   sample_rate: 16000
   norm: 'z-score'
   # norm: 'linear-scale'
-  channels: 1
   
 solver:
   root: './test'
@@ -123,6 +121,3 @@ solver:
   
   # best: False
   # save: True 
-  
-name: "dcunet"
-seed: 10

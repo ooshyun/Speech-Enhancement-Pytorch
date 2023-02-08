@@ -18,7 +18,7 @@ class MelRNN(nn.Module):
                 rnn_type="rnn",
                 *args,
                 **kwarg):
-        super().__init__()
+        super(MelRNN, self).__init__()
 
         self.n_fft = n_fft
         self.hop_length = hop_length
@@ -117,7 +117,7 @@ class Amplitude(nn.Module):
     def __init__(self,
                 *args,
                 **kwarg):
-        super().__init__()
+        super(Amplitude, self).__init__()
     def forward(self, inputs):
         assert inputs.size()[-1] == 2, f"Tensor needs real and imag in the last rank..."
         return torch.abs(torch.pow(inputs[..., 0], exponent=2) - torch.pow(inputs[..., 1], exponent=2))
@@ -126,7 +126,7 @@ class MergeChannel(nn.Module):
     def __init__(self,
                 *args,
                 **kwarg):
-        super().__init__()
+        super(MergeChannel, self).__init__()
     def forward(self, inputs, channel=1, merge: bool=True):
         if merge:
             assert inputs.size()[1] == 1, f"MergeChannel supports mono channel"

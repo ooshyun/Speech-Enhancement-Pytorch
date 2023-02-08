@@ -12,7 +12,7 @@ class ExponentialMovingAverage(nn.Module):
         *args,
         **kwargs,
     ):
-        super().__init__()
+        super(ExponentialMovingAverage, self).__init__()
         self.alpha = alpha
         
         ema0 = nn.Parameter(data=torch.ones((1, ), dtype=torch.float32)*alpha, requires_grad=False)

@@ -15,7 +15,7 @@ class NeuralNetwork(nn.Module):
                 drop_out=0,
                 *args,
                 **kwargs):
-        super().__init__()
+        super(NeuralNetwork, self).__init__()
 
         model = []
         nfeature = int(nfft//2+1)
@@ -68,7 +68,7 @@ class DeepNeuralNetwork(nn.Module):
                 dnn_method="mask",
                 *args,
                 **kwargs):
-        super().__init__()
+        super(DeepNeuralNetwork, self).__init__()
 
         model = []
         for n in range(n_layer):

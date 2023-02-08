@@ -80,32 +80,32 @@ class WavUnet(nn.Module):
         tmp = []
         o = input
 
-        print("Up Sampling!")
+        # print("Up Sampling!")
         # Up Sampling
         for i in range(self.n_layers):
             o = self.encoder[i](o)
             tmp.append(o)
             # [batch_size, T // 2, channels]
             o = o[:, :, ::2]
-            print(tmp[i].shape, o.shape)
+            # print(tmp[i].shape, o.shape)
 
-        print("Middle!")
+        # print("Middle!")
         o = self.middle(o)
-        print(o.shape)
+        # print(o.shape)
 
-        print("Down Sampling!")
+        # print("Down Sampling!")
         # Down Sampling
         for i in range(self.n_layers):
             # [batch_size, T * 2, channels]
             o = F.interpolate(o, scale_factor=2, mode="linear", align_corners=True)
-            print(o.shape, tmp[self.n_layers - i - 1].shape)
+            # print(o.shape, tmp[self.n_layers - i - 1].shape)
             # Skip Connection
             o = torch.cat([o, tmp[self.n_layers - i - 1]], dim=1)
-            print(o.shape)
+            # print(o.shape)
             o = self.decoder[i](o)
 
         o = torch.cat([o, input], dim=1)
-        print(o.shape)
+        # print(o.shape)
         o = self.out(o)
         return o
 

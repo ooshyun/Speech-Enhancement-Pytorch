@@ -24,22 +24,23 @@ class ModelSanityCheck(unittest.TestCase):
         np.random.seed(config.seed)
         random.seed(config.seed)
         
-        train_dataset, validation_dataset, test_dataset = get_train_wav_dataset(config.dset, config.default.dset.name)
+        train_dataset, validation_dataset, test_dataset = get_train_wav_dataset(config.dset)
         train_dataloader, validation_dataloader = get_dataloader([train_dataset, validation_dataset], config)
         test_dataloader, = get_dataloader(datasets=[test_dataset], config=config, train=False)
 
 
         model_list = ['dnn',    # O
-                     'unet',    # O
+                     'unet',    # TODO: grad is NoneType
                      'mel-rnn', # O
                      'dccrn',  # TODO: Test since GPU is using fully
                      'dcunet', # O
                      'demucs', # O
                      'wav-unet', # O
                      'conv-tasnet', # O, gpu 19421MiB -> decrease size 
-                     'crn', # X, out nan
+                     'crn', # TODO: X, out nan
                      ]
         index_model = -2
+        index_model = 2
 
         config.model.name = model_list[index_model]
                      

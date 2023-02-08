@@ -21,7 +21,7 @@ class TFCN(nn.Module):
     or https://web.cse.ohio-state.edu/~wang.77/papers/Pandey-Wang1.icassp19.pdf
     """
     def __init__(self):
-        super().__init__()
+        super(TFCN, self).__init__()
         ...
     
     def forward(self, mix):

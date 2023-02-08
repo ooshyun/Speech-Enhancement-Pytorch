@@ -69,7 +69,7 @@ class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
 
     def __init__(self, in_channels, out_channels, mid_channels=None, dropout=0):
-        super().__init__()
+        super(DoubleConv, self).__init__()
         # self.in_channels = in_channels
         # self.out_channels = out_channels
         # self.mid_channels = mid_channels
@@ -93,7 +93,7 @@ class Down(nn.Module):
     """Downscaling with double conv and then max pool"""
 
     def __init__(self, in_channels, out_channels, dropout=0):
-        super().__init__()
+        super(Down, self).__init__()
         self.maxpool_conv = nn.Sequential(
             DoubleConv(in_channels, out_channels, dropout=dropout),
             nn.MaxPool2d(2),
@@ -107,7 +107,7 @@ class Up(nn.Module):
     """Upscaling then double conv"""
 
     def __init__(self, in_channels, out_channels, bilinear=True, first=False, last=False):
-        super().__init__()
+        super(Up, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         

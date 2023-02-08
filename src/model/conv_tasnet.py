@@ -515,7 +515,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_sources", default=1, type=int)
     parser.add_argument("--sample_rate", default=16000, type=int)
     parser.add_argument("--segment", default=1, type=float)
-    parser.add_argument("--input_channels", default=2, type=int)
+    parser.add_argument("--input_channels", default=1, type=int)
     parser.add_argument("--depth", default=12, type=int)
     parser.add_argument("--channels_interval", default=24, type=int)
     parser.add_argument("--skip", default=False, type=bool)    
@@ -524,7 +524,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     model = get_model()([None]*args.num_sources, N, L, B, H, P, X, R, # C(input_channels)
-                        audio_channels=args.input_channels,
+                        input_channels=args.input_channels,
                         sample_rate=args.sample_rate,
                         norm_type=norm_type,
                         skip=args.skip).to(args.device)

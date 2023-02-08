@@ -7,7 +7,7 @@ import torch.nn as nn
 
 class Encoder(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding=None, complex=False, padding_mode="zeros"):
-        super().__init__()
+        super(Encoder, self).__init__()
         if padding is None:
             padding = [(i - 1) // 2 for i in kernel_size]  # 'SAME' padding
             
@@ -31,7 +31,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding=(0, 0), complex=False):
-        super().__init__()
+        super(Decoder, self).__init__()
         if complex:
             tconv = ComplexConvTranspose2d
             bn = ComplexBatchNorm2d
@@ -59,7 +59,7 @@ class DCUnet(nn.Module):
                  masking_mode="E",
                  *args,
                  **kwargs):
-        super().__init__()
+        super(DCUnet, self).__init__()
 
         if data_type:
             model_complexity = int(model_complexity // 1.414)
@@ -309,7 +309,7 @@ class DCUnet(nn.Module):
 class ComplexConv2d(nn.Module):
     # https://github.com/litcoderr/ComplexCNN/blob/master/complexcnn/modules.py
     def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, **kwargs):
-        super().__init__()
+        super(ComplexConv2d, self).__init__()
 
         ## Model components
         self.conv_re = nn.Conv2d(in_channel, out_channel, kernel_size, stride=stride, padding=padding,
@@ -326,7 +326,7 @@ class ComplexConv2d(nn.Module):
 
 class ComplexConvTranspose2d(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding=0, output_padding=0, dilation=1, groups=1, bias=True, **kwargs):
-        super().__init__()
+        super(ComplexConvTranspose2d, self).__init__()
 
         ## Model components
         self.tconv_re = nn.ConvTranspose2d(in_channel, out_channel,
@@ -358,7 +358,7 @@ class ComplexConvTranspose2d(nn.Module):
 class ComplexBatchNorm2d(nn.Module):
     def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True,
                  track_running_stats=True, **kwargs):
-        super().__init__()
+        super(ComplexBatchNorm2d, self).__init__()
         self.bn_re = nn.BatchNorm2d(num_features=num_features, momentum=momentum, affine=affine, eps=eps, track_running_stats=track_running_stats, **kwargs)
         self.bn_im = nn.BatchNorm2d(num_features=num_features, momentum=momentum, affine=affine, eps=eps, track_running_stats=track_running_stats, **kwargs)
 
@@ -373,7 +373,7 @@ class Amplitude(nn.Module):
     def __init__(self,
                 *args,
                 **kwarg):
-        super().__init__()
+        super(Amplitude, self).__init__()
     def forward(self, inputs):
         assert inputs.size()[-1] == 2, f"Tensor needs real and imag in the last rank..."
         return torch.abs(torch.pow(inputs[..., 0], exponent=2) - torch.pow(inputs[..., 1], exponent=2))

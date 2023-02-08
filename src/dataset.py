@@ -96,23 +96,25 @@ class WavDataset(Dataset):
         clean, sr = sf.read(clean_path, dtype="float32")
         original_length = mixture.shape[0]
 
-        if len(mixture.shape) == 1:
+        sources = np.expand_dims(clean, axis=0)
+
+        if len(mixture.shape) == 1: # expand channel
             mixture = np.expand_dims(mixture, 0)
-            clean = np.expand_dims(clean, 0)
+            sources = np.expand_dims(sources, 1)
 
         # curr_time = time.perf_counter()
 
         if sr != self.sample_rate:
             mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
-            clean = julius.resample_frac(x=from_numpy(clean), old_sr=sr, new_sr=self.sample_rate,
+            sources = julius.resample_frac(x=from_numpy(sources), old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
             sr = self.sample_rate
 
         # print("\nTime for resample: ", time.perf_counter()-curr_time)
             
         if not self.train:
-            return mixture, clean, original_length, name
+            return mixture, sources, original_length, name
 
         if self.train:
             mixture_metadata = {
@@ -122,7 +124,7 @@ class WavDataset(Dataset):
                 "std": 0,
             }
 
-            clean_metadata = {
+            sources_metadata = {
                 "min": 0,
                 "max": 0,
                 "mean": 0,
@@ -135,28 +137,27 @@ class WavDataset(Dataset):
             if self.normalize == "z-score":
                 mixture_metadata["mean"] = torch.mean(mixture, axis=-1, keepdims=True)
                 mixture_metadata["std"] = torch.std(mixture, axis=-1, keepdims=True)
-                clean_metadata["mean"] = torch.mean(clean, axis=-1, keepdims=True)
-                clean_metadata["std"] = torch.std(clean, axis=-1, keepdims=True)
+                sources_metadata["mean"] = torch.mean(sources, axis=-1, keepdims=True)
+                sources_metadata["std"] = torch.std(sources, axis=-1, keepdims=True)
                 mixture = (mixture-mixture_metadata["mean"])/(mixture_metadata["std"]+eps)
-                clean = (clean-clean_metadata["mean"])/(clean_metadata["std"]+eps)
+                sources = (sources-sources_metadata["mean"])/(sources_metadata["std"]+eps)
             
             if self.normalize == "linear-scale":
                 mixture_metadata["max"] = torch.max(mixture, axis=-1, keepdims=True)
                 mixture_metadata["min"] = torch.min(mixture, axis=-1, keepdims=True)
-                clean_metadata["max"] = torch.max(clean, axis=-1, keepdims=True)
-                clean_metadata["min"] = torch.min(clean, axis=-1, keepdims=True)
+                sources_metadata["max"] = torch.max(sources, axis=-1, keepdims=True)
+                sources_metadata["min"] = torch.min(sources, axis=-1, keepdims=True)
                 mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
-                clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
+                sources = (sources-sources_metadata["min"])/(sources_metadata["max"] - sources_metadata["min"]+eps)
             
             #     print("\nTime for norm: ", time.perf_counter()-curr_time)
-            
             assert sr == self.sample_rate
-            assert mixture.shape == clean.shape
+            assert mixture.shape == sources.shape[1:]
 
             if self.sample_length:
-                mixture, clean = sample_fixed_length_data_aligned([mixture, clean], self.sample_length)
+                mixture, sources = sample_fixed_length_data_aligned([mixture, sources], self.sample_length)
             
-            return mixture, clean, mixture_metadata, clean_metadata, name       
+            return mixture, sources, mixture_metadata, sources_metadata, name       
           
 class ClarityWavDataset(Dataset):
     """
@@ -289,40 +290,36 @@ class ClarityWavDataset(Dataset):
         interferer, sr = sf.read(interferer_path, dtype="float32")
         original_length = mixture.shape[0]
 
-        if self.train:
-            scene = name.split("_")[0]
-            start, end = self.target_time[scene]
-            mixture = mixture[start:end, ...]
-            clean = clean[start:end, ...]
-            interferer = interferer[start:end, ...]
+        # if self.train:
+        #     scene = name.split("_")[0]
+        #     start, end = self.target_time[scene]
+        #     mixture = mixture[start:end, ...]
+        #     clean = clean[start:end, ...]
+        #     interferer = interferer[start:end, ...]
 
         mixture = np.transpose(mixture, (-1, 0))
         clean = np.transpose(clean, (-1, 0))
         interferer = np.transpose(interferer, (-1, 0))
 
+        sources = np.stack([clean, interferer], axis=0)
+
         if len(mixture.shape) == 1:
             mixture = np.expand_dims(mixture, 0)
-            clean = np.expand_dims(clean, 0)
-            interferer = np.expand_dims(interferer, 0)
-        # else:
-        #     mixture = np.mean(mixture, axis=0, keepdims=True)
-        #     clean = np.mean(clean, axis=0, keepdims=True)
+            sources = np.expand_dims(sources, 1)
 
         # curr_time = time.perf_counter()
 
         if sr != self.sample_rate:
             mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
-            clean = julius.resample_frac(x=from_numpy(clean), old_sr=sr, new_sr=self.sample_rate,
-                                        output_length=None, full=False)
-            interferer = julius.resample_frac(x=from_numpy(interferer), old_sr=sr, new_sr=self.sample_rate,
+            sources = julius.resample_frac(x=from_numpy(sources), old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
             sr = self.sample_rate
 
         # print("\nTime for resample: ", time.perf_counter()-curr_time)
             
         if not self.train:
-            return mixture, clean, interferer, original_length, name
+            return mixture, sources, original_length, name
 
         if self.train:
             mixture_metadata = {
@@ -332,14 +329,7 @@ class ClarityWavDataset(Dataset):
                 "std": 0,
             }
 
-            clean_metadata = {
-                "min": 0,
-                "max": 0,
-                "mean": 0,
-                "std": 0,
-            }
-
-            interferer_metadata = {
+            sources_metadata = {
                 "min": 0,
                 "max": 0,
                 "mean": 0,
@@ -354,34 +344,26 @@ class ClarityWavDataset(Dataset):
                 mixture_metadata["std"] = torch.std(mixture, axis=-1, keepdims=True)
                 mixture = (mixture-mixture_metadata["mean"])/(mixture_metadata["std"]+eps)
         
-                clean_metadata["mean"] = torch.mean(clean, axis=-1, keepdims=True)
-                clean_metadata["std"] = torch.std(clean, axis=-1, keepdims=True)
-                clean = (clean-clean_metadata["mean"])/(clean_metadata["std"]+eps)
+                sources_metadata["mean"] = torch.mean(sources, axis=-1, keepdims=True)
+                sources_metadata["std"] = torch.std(sources, axis=-1, keepdims=True)
+                sources = (sources-sources_metadata["mean"])/(sources_metadata["std"]+eps)
 
-                interferer_metadata["mean"] = torch.mean(interferer, axis=-1, keepdims=True)
-                interferer_metadata["std"] = torch.std(interferer, axis=-1, keepdims=True)
-                interferer = (interferer-interferer_metadata["mean"])/(interferer_metadata["std"]+eps)
-                
             if self.normalize == "linear-scale":
                 mixture_metadata["max"] = torch.max(mixture, axis=-1, keepdims=True)
                 mixture_metadata["min"] = torch.min(mixture, axis=-1, keepdims=True)
                 mixture = (mixture-mixture_metadata["min"])/(mixture_metadata["max"] - mixture_metadata["min"]+eps)
         
-                clean_metadata["max"] = torch.max(clean, axis=-1, keepdims=True)
-                clean_metadata["min"] = torch.min(clean, axis=-1, keepdims=True)
-                clean = (clean-clean_metadata["min"])/(clean_metadata["max"] - clean_metadata["min"]+eps)
+                sources_metadata["max"] = torch.max(sources, axis=-1, keepdims=True)
+                sources_metadata["min"] = torch.min(sources, axis=-1, keepdims=True)
+                sources = (sources-sources_metadata["min"])/(sources_metadata["max"] - sources_metadata["min"]+eps)
                 
-                interferer_metadata["max"] = torch.max(interferer, axis=-1, keepdims=True)
-                interferer_metadata["min"] = torch.min(interferer, axis=-1, keepdims=True)
-                interferer = (interferer-interferer_metadata["min"])/(interferer_metadata["max"] - clean_metadata["min"]+eps)
-            
             # print("\nTime for norm: ", time.perf_counter()-curr_time)
             
             assert sr == self.sample_rate
-            assert mixture.shape == clean.shape
+            assert mixture.shape == sources.shape[1:]
 
             if self.sample_length:
-                mixture, clean, interferer = sample_fixed_length_data_aligned([mixture, clean, interferer], self.sample_length)
+                mixture, sources= sample_fixed_length_data_aligned([mixture, sources], self.sample_length)
             
-            return mixture, clean, interferer, mixture_metadata, clean_metadata, interferer_metadata, name
+            return mixture, sources, mixture_metadata, sources_metadata, name
 

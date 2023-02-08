@@ -223,7 +223,7 @@ class DCCRN(nn.Module):
         out_spec = torch.cat([real, imag], 1) 
         out_wav = self.istft(out_spec)
          
-        out_wav = torch.squeeze(out_wav, 1)
+        # out_wav = torch.squeeze(out_wav, 1)
         #out_wav = torch.tanh(out_wav)
         out_wav = torch.clamp_(out_wav,-1,1)
         return out_wav

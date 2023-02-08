@@ -6,7 +6,7 @@ import torch.nn as nn
 
 class CausalConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super().__init__()
+        super(CausalConvBlock, self).__init__()
         self.conv = nn.Conv2d(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -35,7 +35,7 @@ class CausalConvBlock(nn.Module):
 
 class CausalTransConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, is_last=False, output_padding=(0, 0)):
-        super().__init__()
+        super(CausalTransConvBlock, self).__init__()
         self.conv = nn.ConvTranspose2d(
             in_channels=in_channels,
             out_channels=out_channels,

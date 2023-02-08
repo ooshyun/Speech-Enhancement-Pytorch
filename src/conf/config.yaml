@@ -5,7 +5,9 @@ default:
   dset: 
     name: 'Clarity'
     config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
-  
+
+seed: 10
+
 dummy:
 misc:
   num_workers: 1
@@ -27,13 +29,13 @@ optim:
   # loss: 'ideal-mag'
   # loss: 'si-sdr'
   clip_grad: False
-  pit: True
+  pit: False
 
 model:
-  # wav-unet, dcunet, demucs, dccrn, mel-rnn, crn
-  # [X] conv-tasnet
+  # wav-unet, dcunet, demucs, dccrn, mel-rnn, crn, conv-tasnet
   name: 'conv-tasnet'
-  input_channels: 1
+  audio_channels: 2
+  num_spk: 2
   segment: 1.024
   sample_rate: 16000
   n_fft: 512
@@ -81,7 +83,7 @@ model:
   # win_length: 320
   
   # Demucs
-  sources: [None]
+  # sources: [None]
   
   # DCCRN 
   # default [16,32,64,128,256,256] 
@@ -91,7 +93,6 @@ model:
   # Conv-tasnet
   sources: [None, None]
   skip: False
-  input_channels: 2
 
 dset:
   # wav: './data/VoiceBankDEMAND/DS_10283_2791'
@@ -114,7 +115,7 @@ solver:
   total_steps: 5000
   save_checkpoint_interval: 5
   patience: 40
-  resume: #'./result/conv-tasnet/20230207-002844'
+  resume: './result/conv-tasnet/20230207-234031'
   preloaded_model:
   cudnn_deterministic: True
   validation: 
@@ -125,6 +126,3 @@ solver:
     interval: 40
     num_show: 10
     metric: 'sisdr' # loss, stoi, pesq, sisdr
-  
-name: 'conv-tasnet'
-seed: 10

@@ -1,9 +1,46 @@
 import os
 import yaml
 import json
+import glob
 import torch
 import numpy as np
 import typing as tp
+from omegaconf import OmegaConf
+
+def get_filtered_snr_file(config):
+    snr_range = [0, 5]  
+    
+    assert isinstance(snr_range, list) and len(snr_range) == 2, f"SNR range should have minimum and maximum value"
+    print(f"\t {config.dset.name} dataset SNR: {snr_range[0]} <= SNR < {snr_range[1]}")
+
+    filtered_file_list = []
+    snr_min, snr_max = snr_range
+
+    if config.dset.name == "VoiceBankDEMAND":
+        path_log = './data/VoiceBankDEMAND/DS_10283_2791/logfiles'
+        text_files = glob.glob(
+            os.path.join(path_log, "*trainset*")
+        )
+        metadata = {}
+        for text_file in text_files:
+            with open(text_file, "r") as tmp:
+                text = tmp.read().split("\n")
+                for i, t in enumerate(text):
+                    text[i] = t.split(" ")
+                    if len(text[i]) == 3:
+                        metadata[text[i][0]] = {'type':text[i][1], 'SNR':int(text[i][2])}
+        for name, values in metadata.items():
+            if snr_min <= values['SNR'] and values['SNR'] < snr_max:
+                filtered_file_list.append(name)
+
+    elif config.dset.name == "Clarity":
+        path_log = '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data/custom_metadata/scenes.train.snr.json'
+        metadata = OmegaConf.to_container(OmegaConf.load(path_log))
+        for scene_name, snr in metadata.items():
+            if snr_min <= snr and snr < snr_max:
+                filtered_file_list.append(scene_name)
+
+    return filtered_file_list
 
 def split_list(data:list, ratio: list):
     assert (np.sum(ratio) - 1) < 1e-5, "The summation of ratio should be 1..."
