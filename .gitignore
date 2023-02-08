@@ -1,4 +1,6 @@
 **
+!*.py
+!*.ipynb
 !src/
 !test/
 !LICENSE

@@ -1,23 +1,82 @@
 import os
 import yaml
 import json
+import glob
 import torch
 import numpy as np
 import typing as tp
+from omegaconf import OmegaConf
 
-def sample_fixed_length_data_aligned(data_a, data_b, sample_length):
-    """sample with fixed length from two dataset
+def get_filtered_snr_file(config):
+    snr_range = [0, 5]  
+    
+    assert isinstance(snr_range, list) and len(snr_range) == 2, f"SNR range should have minimum and maximum value"
+    print(f"\t {config.dset.name} dataset SNR: {snr_range[0]} <= SNR < {snr_range[1]}")
+
+    filtered_file_list = []
+    snr_min, snr_max = snr_range
+
+    if config.dset.name == "VoiceBankDEMAND":
+        path_log = './data/VoiceBankDEMAND/DS_10283_2791/logfiles'
+        text_files = glob.glob(
+            os.path.join(path_log, "*trainset*")
+        )
+        metadata = {}
+        for text_file in text_files:
+            with open(text_file, "r") as tmp:
+                text = tmp.read().split("\n")
+                for i, t in enumerate(text):
+                    text[i] = t.split(" ")
+                    if len(text[i]) == 3:
+                        metadata[text[i][0]] = {'type':text[i][1], 'SNR':int(text[i][2])}
+        for name, values in metadata.items():
+            if snr_min <= values['SNR'] and values['SNR'] < snr_max:
+                filtered_file_list.append(name)
+
+    elif config.dset.name == "Clarity":
+        path_log = '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data/custom_metadata/scenes.train.snr.json'
+        metadata = OmegaConf.to_container(OmegaConf.load(path_log))
+        for scene_name, snr in metadata.items():
+            if snr_min <= snr and snr < snr_max:
+                filtered_file_list.append(scene_name)
+
+    return filtered_file_list
+
+def split_list(data:list, ratio: list):
+    assert (np.sum(ratio) - 1) < 1e-5, "The summation of ratio should be 1..."
+    train_ratio = ratio[0]+ratio[1]
+    index = np.arange(len(data))
+    np.random.shuffle(index)
+    data_result = [data[i] for i in index]
+    middle = int(train_ratio*len(data_result))
+
+    return data_result[:middle], data_result[middle:]
+
+
+def sample_fixed_length_data_aligned(data_list: list, sample_length, start=None):
+    """sample with fixed length from several dataset
+
+        time = [start, end]
     """
-    assert data_a.shape[-1] == data_b.shape[-1], "Inconsistent dataset length, unable to sampling"
-    assert data_a.shape[-1] >= sample_length, f"len(data_a) is {data_a.shape[-1]}, sample_length is {sample_length}."
+    assert isinstance(data_list, list)
+    
+    assert data_list[0].shape[-1] >= sample_length, f"len(data_a) is {data_list[0].shape[-1]}, sample_length is {sample_length}."
 
-    length_data = data_a.shape[-1]
-
-    start = np.random.randint(length_data - sample_length + 1)
+    length_data = data_list[0].shape[-1]
+    
+    if start is None:
+        start = np.random.randint(length_data - sample_length + 1)
     # print(f"Random crop from: {start}")
+
     end = start + sample_length
 
-    return data_a[..., start:end], data_b[..., start:end]
+    data_result_list = [None]*len(data_list)
+    for i in range(len(data_list)):
+        data_result_list[i] = data_list[i][..., start:end]
+
+    return data_result_list
+
+    
 
 
 def prepare_device(n_gpu: int, cudnn_deterministic=False):

@@ -3,6 +3,8 @@
 #
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+
+# This code is from https://github.com/facebookresearch/denoiser
 """
 import math
 import typing as tp
@@ -57,7 +59,7 @@ class LayerScale(nn.Module):
         channel_last = False corresponds to (B, C, T) tensors
         channel_last = True corresponds to (T, B, C) tensors
         """
-        super().__init__()
+        super(LayerScale, self).__init__()
         self.channel_last = channel_last
         self.scale = nn.Parameter(torch.zeros(channels, requires_grad=True))
         self.scale.data[:] = init
@@ -75,7 +77,7 @@ class BLSTM(nn.Module):
     chunks and the LSTM applied separately on each chunk.
     """
     def __init__(self, dim, layers=1, max_steps=None, skip=False):
-        super().__init__()
+        super(BLSTM, self).__init__()
         assert max_steps is None or max_steps % 4 == 0
         self.max_steps = max_steps
         self.lstm = nn.LSTM(bidirectional=True, num_layers=layers, hidden_size=dim, input_size=dim)
@@ -161,7 +163,7 @@ class DConv(nn.Module):
             dilate: if true, use dilation, increasing with the depth.
         """
 
-        super().__init__()
+        super(DConv, self).__init__()
         assert kernel % 2 == 1
         self.channels = channels
         self.compress = compress
@@ -212,7 +214,7 @@ class LocalState(nn.Module):
     Also a failed experiments with trying to provide some frequency based attention.
     """
     def __init__(self, channels: int, heads: int = 4, nfreqs: int = 0, ndecay: int = 4):
-        super().__init__()
+        super(LocalState, self).__init__()
         assert channels % heads == 0, (channels, heads)
         self.heads = heads
         self.nfreqs = nfreqs
@@ -302,7 +304,9 @@ class Demucs(nn.Module):
                  rescale=0.1,
                  # Metadata
                  samplerate=44100,
-                 segment=4 * 10):
+                 segment=4 * 10,
+                 *args,
+                 **kwargs):
         """
         Args:
             sources (list[str]): list of source names
@@ -343,7 +347,7 @@ class Demucs(nn.Module):
                 This is used by `demucs.apply.apply_model`.
         """
 
-        super().__init__()
+        super(Demucs, self).__init__()
         self.audio_channels = audio_channels
         self.sources = sources
         self.kernel_size = kernel_size
@@ -517,16 +521,23 @@ if __name__ == "__main__":
                     "as well as checking the delta with the offline implementation.")
     parser.add_argument("--sample_rate", default=16000, type=int)
     parser.add_argument("--segment", default=1.024, type=float)
+    parser.add_argument("--num_sources", default=2, type=int)
     parser.add_argument("--input_channels", default=2, type=int)
     parser.add_argument("--device", default="cpu", type=str)
 
 
     args = parser.parse_args()
     
-    model = get_model()(sources=[None]).to(args.device)
+    sources = ["mono"]*args.num_sources
+    model = get_model()(sources=sources).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
-    x = torch.randn(args.input_channels, length).to(args.device)
-    out = model(x[None])[0]
+    if len(sources)==1:
+        x = torch.randn(args.input_channels, length).to(args.device)
+    else:
+        x = torch.randn(args.input_channels, length).to(args.device)
+
+    out = model(x[None])
+    print("Out: ", out.shape)
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")

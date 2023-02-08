@@ -80,24 +80,32 @@ class WavUnet(nn.Module):
         tmp = []
         o = input
 
+        # print("Up Sampling!")
         # Up Sampling
         for i in range(self.n_layers):
             o = self.encoder[i](o)
             tmp.append(o)
             # [batch_size, T // 2, channels]
             o = o[:, :, ::2]
+            # print(tmp[i].shape, o.shape)
 
+        # print("Middle!")
         o = self.middle(o)
+        # print(o.shape)
 
+        # print("Down Sampling!")
         # Down Sampling
         for i in range(self.n_layers):
             # [batch_size, T * 2, channels]
             o = F.interpolate(o, scale_factor=2, mode="linear", align_corners=True)
+            # print(o.shape, tmp[self.n_layers - i - 1].shape)
             # Skip Connection
             o = torch.cat([o, tmp[self.n_layers - i - 1]], dim=1)
+            # print(o.shape)
             o = self.decoder[i](o)
 
         o = torch.cat([o, input], dim=1)
+        # print(o.shape)
         o = self.out(o)
         return o
 
@@ -133,8 +141,11 @@ if __name__ == "__main__":
                         channels_interval=args.channels_interval).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
-    x = torch.randn(1, length).to(args.device)
-    out = model(x[None])[0]
+    x = torch.randn(args.input_channels, length).to(args.device)
+    print(f"Input: ", x[None].shape)
+
+    out = model(x[None])
+    print(f"Out: {out.shape}")
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")
     
