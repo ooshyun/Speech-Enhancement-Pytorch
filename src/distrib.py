@@ -116,6 +116,7 @@ def get_train_wav_voicebankdemand(config):
                                         offset=0,
                                         normalize=config.norm,
                                         sample_rate=config.sample_rate,
+                                        audio_channels=config.audio_channels,
                                         train=True))
 
         test_dataset.append(WavDataset(mixture_dataset=mixture_path_dataset,
@@ -126,6 +127,7 @@ def get_train_wav_voicebankdemand(config):
                                         offset=0,
                                         normalize=config.norm,
                                         sample_rate=config.sample_rate,
+                                        audio_channels=config.audio_channels,
                                         train=False))
 
     train_dataset = ConcatDataset(train_dataset)
@@ -153,7 +155,8 @@ def get_train_wav_clarity(config):
                                     limit=None,
                                     offset=0,
                                     normalize=config.norm,
-                                    sample_rate=config.sample_rate,                                    
+                                    sample_rate=config.sample_rate,
+                                    audio_channels=config.audio_channels,                                
                                     train=True)     
     
     ratio_train = config.split[0]
@@ -169,11 +172,28 @@ def get_train_wav_clarity(config):
                                         offset=0,
                                         normalize=config.norm,
                                         sample_rate=config.sample_rate,
+                                        audio_channels=config.audio_channels,
                                         train=False) 
 
     print(f"Train {len(train_dataset)}, Validation {len(validation_dataset)}, Test {len(test_dataset)}")
 
     return train_dataset, validation_dataset, test_dataset
+
+def get_dev_wav_clarity(config):
+    sample_length = int(config.sample_rate*config.segment)
+
+    scene_list = list(omegaconf.OmegaConf.load(os.path.join(config.wav, "custom_metadata/scenes.dev.scene_name.json")))
+    dev_dataset = ClarityWavDataset(path_dataset=config.wav,
+                                    scenes= scene_list,
+                                    sample_length=sample_length if not config.use_all else None,
+                                    limit=None,
+                                    offset=0,
+                                    normalize=config.norm,
+                                    sample_rate=config.sample_rate,
+                                    audio_channels=config.audio_channels,
+                                    train=False,
+                                    dev_clarity=True)     
+    return dev_dataset
 
 def get_train_wav_dataset(config):
     if config.name == "VoiceBankDEMAND":

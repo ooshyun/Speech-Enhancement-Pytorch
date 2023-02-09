@@ -10,6 +10,9 @@ import omegaconf
 from .utils import(
     sample_fixed_length_data_aligned,
 )
+from .audio import(
+    convert_audio_channels,
+)
 from torch import from_numpy
 from torch.utils.data import Dataset 
 
@@ -35,6 +38,7 @@ class WavDataset(Dataset):
                  offset=0,
                  normalize="",
                  sample_rate=16000,
+                 audio_channels=1,
                  train=True
                  ):
         """
@@ -78,6 +82,7 @@ class WavDataset(Dataset):
         self.sample_length = sample_length
         self.normalize = normalize
         self.sample_rate = sample_rate
+        self.audio_channels = audio_channels
 
         print(f"\t Offset: {offset}")
         print(f"\t Limit: {limit}")
@@ -96,18 +101,21 @@ class WavDataset(Dataset):
         clean, sr = sf.read(clean_path, dtype="float32")
         original_length = mixture.shape[0]
 
-        sources = np.expand_dims(clean, axis=0)
-
         if len(mixture.shape) == 1: # expand channel
             mixture = np.expand_dims(mixture, 0)
-            sources = np.expand_dims(sources, 1)
+            sources = np.expand_dims(sources, 0)
 
+        mixture = convert_audio_channels(from_numpy(mixture), channels=self.audio_channels)
+        clean = convert_audio_channels(from_numpy(clean), channels=self.audio_channels)
+
+        sources = torch.unsqueeze(clean, dim=0) # expand speaker
+        
         # curr_time = time.perf_counter()
 
         if sr != self.sample_rate:
-            mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
+            mixture = julius.resample_frac(x=mixture, old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
-            sources = julius.resample_frac(x=from_numpy(sources), old_sr=sr, new_sr=self.sample_rate,
+            sources = julius.resample_frac(x=sources, old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
             sr = self.sample_rate
 
@@ -171,7 +179,9 @@ class ClarityWavDataset(Dataset):
                  offset=0,
                  normalize="",
                  sample_rate=16000,
-                 train=True
+                 audio_channels=2,
+                 train=True,
+                 dev_clarity=False,
                  ):
         """
         Construct train dataset
@@ -215,7 +225,7 @@ class ClarityWavDataset(Dataset):
         self.target_time = omegaconf.OmegaConf.load(os.path.join(path_dataset, "custom_metadata/scenes.train.time.json"))
 
         # get dataset
-        if train:
+        if train and (not dev_clarity):
             mixture_wav_files_find = []
             clean_wav_files_find = []
             interferer_wav_files_find = []
@@ -246,18 +256,19 @@ class ClarityWavDataset(Dataset):
 
             assert len(mixture_wav_files) == len(clean_wav_files) == len(interferer_wav_files)
             
-        if not train:
+        if (not train) or dev_clarity:
+            mode = "train" if not dev_clarity else "dev"
             mixture_wav_files = []
             clean_wav_files = []
             interferer_wav_files = []
 
             for scene in scenes:
-                mixture_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[2]}_CH1.wav'
-                clean_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[3]}_CH1.wav'
-                interferer_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[1]}_CH1.wav'
+                clean_wav_file = f'{path_dataset}/{mode}/scenes/{scene}_{source_list[3]}_CH1.wav'
+                mixture_wav_file = f'{path_dataset}/{mode}/scenes/{scene}_{source_list[2]}_CH1.wav'
+                interferer_wav_file = f'{path_dataset}/{mode}/scenes/{scene}_{source_list[1]}_CH1.wav'
 
-                mixture_wav_files.append(mixture_wav_file)
                 clean_wav_files.append(clean_wav_file)
+                mixture_wav_files.append(mixture_wav_file)
                 interferer_wav_files.append(interferer_wav_file)
                 
         self.mixture_wav_files = mixture_wav_files
@@ -269,7 +280,9 @@ class ClarityWavDataset(Dataset):
         self.sample_length = sample_length
         self.normalize = normalize
         self.sample_rate = sample_rate
+        self.audio_channels = audio_channels
 
+        print(f"\t Sample file: {self.mixture_wav_files[0]}")
         print(f"\t Offset: {offset}")
         print(f"\t Limit: {limit}")
         print(f"\t Final length: {self.length}")
@@ -297,22 +310,29 @@ class ClarityWavDataset(Dataset):
         #     clean = clean[start:end, ...]
         #     interferer = interferer[start:end, ...]
 
-        mixture = np.transpose(mixture, (-1, 0))
-        clean = np.transpose(clean, (-1, 0))
-        interferer = np.transpose(interferer, (-1, 0))
-
-        sources = np.stack([clean, interferer], axis=0)
-
         if len(mixture.shape) == 1:
             mixture = np.expand_dims(mixture, 0)
-            sources = np.expand_dims(sources, 1)
+            clean = np.expand_dims(sources, 0)
+            interferer = np.expand_dims(interferer, 0)
+        else:
+            mixture = np.transpose(mixture, (-1, 0))
+            clean = np.transpose(clean, (-1, 0))
+            interferer = np.transpose(interferer, (-1, 0))
+
+        assert mixture.shape[0] == clean.shape[0], f"Mixture and Clean channel in Clarity dataset are difference..."
+
+        mixture = convert_audio_channels(from_numpy(mixture), channels=self.audio_channels)
+        clean = convert_audio_channels(from_numpy(clean), channels=self.audio_channels)
+        interferer = convert_audio_channels(from_numpy(interferer), channels=self.audio_channels)
+
+        sources = torch.stack([clean, interferer], axis=0)
 
         # curr_time = time.perf_counter()
 
         if sr != self.sample_rate:
-            mixture = julius.resample_frac(x=from_numpy(mixture), old_sr=sr, new_sr=self.sample_rate,
+            mixture = julius.resample_frac(x=mixture, old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
-            sources = julius.resample_frac(x=from_numpy(sources), old_sr=sr, new_sr=self.sample_rate,
+            sources = julius.resample_frac(x=sources, old_sr=sr, new_sr=self.sample_rate,
                                         output_length=None, full=False)
             sr = self.sample_rate
 

@@ -39,7 +39,7 @@ class ModelSanityCheck(unittest.TestCase):
                      'conv-tasnet', # O, gpu 19421MiB -> decrease size 
                      'crn', # TODO: X, out nan
                      ]
-        index_model = -1
+        index_model = -2
         # index_model = 2
         config.model.name = model_list[index_model]
         model = get_model(config.model)

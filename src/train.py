@@ -14,7 +14,7 @@ from .distrib import (
 import warnings
 from .solver import Solver
 
-def main(path_config, return_solver=False):
+def main(path_config, return_solver=False, mode="train"):
     config = load_yaml(path_config)
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
@@ -22,7 +22,7 @@ def main(path_config, return_solver=False):
 
     print("-"*30)
     print("\tSearch training datasets...")
-    train_dataset, validation_dataset, test_dataset = get_train_wav_dataset(config.dset, config.default.dset.name)
+    train_dataset, validation_dataset, test_dataset = get_train_wav_dataset(config.dset)
     
     print("-"*30)
     print("\tLoading data loader...")    
@@ -62,6 +62,33 @@ def main(path_config, return_solver=False):
     )
 
     if return_solver:
+        print("-"*30)
+        print("\tReturning Solver...")    
         return solver
     else:
-        solver.train()
+        print("-"*30)
+        print(f"\t{mode} mode Solver...")    
+        if mode=="train":
+            solver.train()
+        elif mode=="validation":
+            solver._run_one_epoch(1, 1, train=False)
+        elif mode=="test":
+            solver.inference(1, 1)
+        
+        score = solver.score
+        score_inference = solver.score_inference
+        score_inference_ref = solver.score_inference_reference
+        print("-"*30)
+        print("\tResult...")
+        
+        print("-"*30)
+        print("\tScore")
+        print(score)
+
+        print("-"*30)
+        print("\tScore in test dataset")
+        print(score_inference)
+
+        print("-"*30)
+        print("\tScore in test reference dataset")
+        print(score_inference_ref)
