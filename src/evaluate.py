@@ -1,11 +1,10 @@
 import torch
 import torch.nn.functional as nn
-
-MULTI_SPEECH_SEPERATION_MODELS = ("demucs", "conv-tasnet")
-MULTI_CHANNEL_SEPERATION_MODELS = ("demucs", "conv-tasnet", "unet")
-MONARCH_SPEECH_SEPARTAION_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet", "dccrn", "wav-unet")
-STFT_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet")
-WAV_MODELS = ("dccrn", "demucs", "conv-tasnet", "wav-unet")
+from .model.types import (MULTI_SPEECH_SEPERATION_MODELS,
+                MULTI_CHANNEL_SEPERATION_MODELS,
+                MONARCH_SPEECH_SEPARTAION_MODELS, 
+                STFT_MODELS,
+                WAV_MODELS,)
 
 def evaluate(mixture, model, device, config):
     """

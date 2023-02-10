@@ -91,11 +91,12 @@ try:
 except ImportError:
     LIB_TORCH_METRIC = False
 
-MULTI_SPEECH_SEPERATION_MODELS = ("demucs", "conv-tasnet")
-MULTI_CHANNEL_SEPERATION_MODELS = ("demucs", "conv-tasnet", "unet")
-MONARCH_SPEECH_SEPARTAION_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet", "dccrn", "wav-unet")
-STFT_MODELS = ("mel-rnn", "dcunet", "crn", "dnn", "unet")
-WAV_MODELS = ("dccrn", "demucs", "conv-tasnet", "wav-unet")
+from .model.types import (MULTI_SPEECH_SEPERATION_MODELS,
+                MULTI_CHANNEL_SEPERATION_MODELS,
+                MONARCH_SPEECH_SEPARTAION_MODELS, 
+                STFT_MODELS,
+                WAV_MODELS,)
+
 
 class Solver(object):
     def __init__(self, 
@@ -391,7 +392,9 @@ class Solver(object):
             
             batch, nchannel, nsample = mixture.shape
             num_spk = sources.shape[1]
-    
+
+            # print("DEBUG: ", mixture.shape, sources.shape,)
+
             # mono channel to stereo for source separation models
             assert self.config.model.audio_channels == nchannel, f"Channel between {self.config.dset.name} and {self.config.model.name} did not match..."
             assert self.config.model.num_spk == num_spk, f"number of speakers between {self.config.dset.name} and {self.config.model.name} did not match..."
@@ -418,9 +421,12 @@ class Solver(object):
             if not train:
                 self.model.eval()
             
+            # print("DEBUG: ", mixture.shape, sources.shape,)
+
             # with torch.autograd.detect_anomaly(): # figuring out nan grads
             enhanced: torch.Tensor = self.model(mixture)
 
+            # print("DEBUG: ", mixture.shape, sources.shape, enhanced.shape)
             # source separation models give out.shape = batch, sources, channels, features, 
             if self.config.optim.pit and num_spk >= 2:
                 with torch.no_grad():
@@ -492,7 +498,7 @@ class Solver(object):
 
         total_step = len(dataloader)
         if (not self.config.solver.all_steps) and total_step > self.config.solver.test.total_steps:
-            print(f"\tTotal step({self.config.solver.total_steps}) is less then the length of dataset({total_step})...")
+            print(f"\tTotal step({self.config.solver.test.total_steps}) is less then the length of dataset({total_step})...")
             print(f"\tTrain will stop at step {self.config.solver.total_steps}!")
             total_step = self.config.solver.test.total_steps
 
@@ -529,15 +535,8 @@ class Solver(object):
             if self.config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
                 mixture = torch.reshape(mixture, shape=(nbatch, nchannel, nsample))
                 enhanced = torch.reshape(enhanced, shape=(nbatch, nchannel, nsample))
-            
-            if self.config.optim.pit and num_spk >= 2:
-                with torch.no_grad():
-                    index_enhance, index_target = PermutationInvariantTraining(enhance=enhanced.detach().clone(),
-                                                                target=sources.detach().clone(),
-                                                                loss_function=self.loss_function)
-                enhanced = enhanced[:, index_enhance, ...]
-                sources = sources[:, index_target, ...]
-            elif self.config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
+
+            if self.config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
                 enhanced = enhanced[:, 0]
                 sources = sources[:, 0]
             elif self.config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
@@ -556,14 +555,21 @@ class Solver(object):
 
             for metric_name, metric_value in score.items():
                 self.score_inference[metric_name] += metric_value    
+                self.writer.add_scalar(f"Test/{metric_name}_enhance", np.mean(metric_value), (epoch+1)*total_step+step)
+            
             for metric_name, metric_value in score_reference.items():
                 self.score_inference_reference[metric_name] += metric_value  
-            
+                self.writer.add_scalar(f"Test/{metric_name}_mixture", np.mean(metric_value), (epoch+1)*total_step+step)
+                
             self.spec_audio_visualization(mixture=mixture, enhanced=enhanced, clean=sources, name=name[0], epoch=epoch)            
 
             if LIB_CLARITY and self.config.dset.name == 'Clarity':
-                self.compute_metric_clarity(mixture=mixture, enhanced=enhanced, length=origial_length, name=name[0])
+                self.compute_metric_clarity(mixture=mixture, enhanced=enhanced, length=original_length, name=name[0])
                 tepoch.set_postfix(loss=loss, metric=np.mean(self.score_inference[self.config.solver.test.metric]), metric2=np.mean(self.score_inference["haspi"]))
+                self.writer.add_scalar(f"Test/haspi_enhance", np.mean(self.score_inference["haspi"]), (epoch+1)*total_step+step)
+                self.writer.add_scalar(f"Test/hasqi_enhance", np.mean(self.score_inference["hasqi"]), (epoch+1)*total_step+step)
+                self.writer.add_scalar(f"Test/haspi_mixture", np.mean(self.score_inference["haspi"]), (epoch+1)*total_step+step)
+                self.writer.add_scalar(f"Test/hasqi_mixture", np.mean(self.score_inference["hasqi"]), (epoch+1)*total_step+step)
             else:
                 tepoch.set_postfix(loss=loss, metric=np.mean(self.score_inference[self.config.solver.test.metric]))
 
@@ -670,7 +676,7 @@ class Solver(object):
 
         score = evaluate_clarity(scene=scene, enhanced=enhanced_resample, sample_rate=cfg.nalr.fs, cfg=cfg)
         score_mixture = evaluate_clarity(scene=scene, enhanced=mixture_resample, sample_rate=cfg.nalr.fs, cfg=cfg)
-
+        
         self.score_inference['haspi'].append(np.mean(score[0]))
         self.score_inference['hasqi'].append(np.mean(score[1]))
         self.score_inference_reference['haspi'].append(np.mean(score_mixture[0]))
