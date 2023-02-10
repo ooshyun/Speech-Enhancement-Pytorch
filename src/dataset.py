@@ -105,9 +105,11 @@ class WavDataset(Dataset):
             mixture = np.expand_dims(mixture, 0)
             sources = np.expand_dims(sources, 0)
 
-        mixture = convert_audio_channels(from_numpy(mixture), channels=self.audio_channels)
-        clean = convert_audio_channels(from_numpy(clean), channels=self.audio_channels)
-
+        # mixture = convert_audio_channels(from_numpy(mixture), channels=self.audio_channels)
+        # clean = convert_audio_channels(from_numpy(clean), channels=self.audio_channels)
+        mixture = from_numpy(mixture)
+        clean = from_numpy(clean)
+        
         sources = torch.unsqueeze(clean, dim=0) # expand speaker
         
         # curr_time = time.perf_counter()
@@ -321,9 +323,12 @@ class ClarityWavDataset(Dataset):
 
         assert mixture.shape[0] == clean.shape[0], f"Mixture and Clean channel in Clarity dataset are difference..."
 
-        mixture = convert_audio_channels(from_numpy(mixture), channels=self.audio_channels)
-        clean = convert_audio_channels(from_numpy(clean), channels=self.audio_channels)
-        interferer = convert_audio_channels(from_numpy(interferer), channels=self.audio_channels)
+        # mixture = convert_audio_channels(from_numpy(mixture), channels=self.audio_channels)
+        # clean = convert_audio_channels(from_numpy(clean), channels=self.audio_channels)
+        # interferer = convert_audio_channels(from_numpy(interferer), channels=self.audio_channels)
+        mixture = from_numpy(mixture)
+        clean = from_numpy(clean)
+        interferer = from_numpy(interferer)
 
         sources = torch.stack([clean, interferer], axis=0)
 
