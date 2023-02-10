@@ -498,7 +498,7 @@ class Solver(object):
 
         total_step = len(dataloader)
         if (not self.config.solver.all_steps) and total_step > self.config.solver.test.total_steps:
-            print(f"\tTotal step({self.config.solver.total_steps}) is less then the length of dataset({total_step})...")
+            print(f"\tTotal step({self.config.solver.test.total_steps}) is less then the length of dataset({total_step})...")
             print(f"\tTrain will stop at step {self.config.solver.total_steps}!")
             total_step = self.config.solver.test.total_steps
 
