@@ -127,7 +127,9 @@ DL models are for single channel, single sources, and multi-speakers Speech Sepa
 - Currenlty, it denoised as below wav file, but still contiute to training.
 
 - Wavform
-    ![Denoised Wavform](./data/img/denoised_wavform.png)
+    
+![Denoised Wavform](./data/img/denoised_wavform.png)
 
 - Spetrogram
-    ![DenoisedSpectrogram](./data/img/denoised_spectrogram.png)
+
+![DenoisedSpectrogram](./data/img/denoised_spectrogram.png)
