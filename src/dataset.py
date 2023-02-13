@@ -103,7 +103,7 @@ class WavDataset(Dataset):
 
         if len(mixture.shape) == 1: # expand channel
             mixture = np.expand_dims(mixture, 0)
-            sources = np.expand_dims(sources, 0)
+            clean = np.expand_dims(clean, 0)
 
         # mixture = convert_audio_channels(from_numpy(mixture), channels=self.audio_channels)
         # clean = convert_audio_channels(from_numpy(clean), channels=self.audio_channels)
