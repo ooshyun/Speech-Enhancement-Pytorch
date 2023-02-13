@@ -89,7 +89,7 @@ dset:
   # name: 'VoiceBankDEMAND'
   # wav: './data/VoiceBankDEMAND/DS_10283_2791'
   name: 'Clarity'
-  wav: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
+  wav: './data/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
   split: [0.85, 0.1, 0.05]
   segment: 1.024  
   audio_channels: 1
