@@ -768,6 +768,7 @@ if __name__ == "__main__":
     parser.add_argument("--sample_rate", default=16000, type=int)
     parser.add_argument("--segment", default=1.024, type=float)
     parser.add_argument("--input_channels", default=1, type=int)
+        
     parser.add_argument("--rnn_layers", default=2, type=int)
     parser.add_argument("--rnn_units", default=2, type=int)
     parser.add_argument("--n_fft", default=512, type=int)
