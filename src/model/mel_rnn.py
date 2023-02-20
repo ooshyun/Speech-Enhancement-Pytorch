@@ -43,21 +43,21 @@ class MelRNN(nn.Module):
                         hidden_size=rnn_hidden, 
                         num_layers=rnn_layer, 
                         bias=False, 
-                        batch_first=True, # True, (batch, seq, feature)
+                        batch_first=False,
                         bidirectional=False)
         elif rnn_type == "lstm":
             self.rnn = nn.LSTM(input_size=n_features, 
                         hidden_size=rnn_hidden, 
                         num_layers=rnn_layer, 
                         bias=False, 
-                        batch_first=True, 
+                        batch_first=False, 
                         bidirectional=False)
         elif rnn_type == "gru":
             self.rnn = nn.GRU(input_size=n_features, 
                         hidden_size=rnn_hidden, 
                         num_layers=rnn_layer, 
                         bias=False, 
-                        batch_first=True, 
+                        batch_first=False, 
                         bidirectional=False)
         
         self.batchnorm = nn.BatchNorm1d(num_features=rnn_hidden)
@@ -121,6 +121,7 @@ class Amplitude(nn.Module):
     def forward(self, inputs):
         assert inputs.size()[-1] == 2, f"Tensor needs real and imag in the last rank..."
         return torch.abs(torch.pow(inputs[..., 0], exponent=2) - torch.pow(inputs[..., 1], exponent=2))
+
 
 class MergeChannel(nn.Module):
     def __init__(self,

@@ -1,6 +1,15 @@
 import unittest
 
 class ModelSanityCheck(unittest.TestCase):
+    def test_model_inference(self):
+        """
+        python -m unittest -v test.test_model.ModelSanityCheck.test_model_inference
+        """
+        from src.train import main
+        path_config = "./test/result/conv-tasnet/20230218-105741/config.yaml"
+        main(path_config=path_config, mode="test", save=True)
+
+
     def test_model(self):
         """
         python -m unittest -v test.test_model.ModelSanityCheck.test_model
@@ -38,8 +47,9 @@ class ModelSanityCheck(unittest.TestCase):
                      'wav-unet', # O
                      'conv-tasnet', # O, gpu 19421MiB -> decrease size 
                      'crn', # TODO: X, out nan
+                     'rnn-stft-mask',
                      ]
-        index_model = -2
+        index_model = -3
         # index_model = 2
         config.model.name = model_list[index_model]
         model = get_model(config.model)
@@ -56,8 +66,10 @@ class ModelSanityCheck(unittest.TestCase):
             train_dataloader=train_dataloader,
             validation_dataloader=validation_dataloader,
             test_dataloader=test_dataloader,
+            device='cpu'
         )
         solver.train()
+
     
     def test_sepformer(self):
         """

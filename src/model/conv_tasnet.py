@@ -34,20 +34,52 @@ def overlap_and_add(signal, frame_step):
 class ConvTasNet(nn.Module):
     def __init__(self,  # default
                  sources,
-                 N=128, # 256
-                 L=40, # 20
+                 N=128,
+                 L=40,
                  B=128,
                  H=256,
                  P=3,
                  X=7,
                  R=2,
+                ######## 
+                #  N=128,
+                #  L=16,
+                #  B=128,
+                #  H=256,
+                #  P=3,
+                #  X=7,
+                #  R=3,
+                ######## 
+                #  N=256,
+                #  L=16,
+                #  B=128,
+                #  H=256,
+                #  P=3,
+                #  X=8,
+                #  R=3,
+                ########
+                #  N=256,
+                #  L=20,
+                #  B=256,
+                #  H=512,
+                #  P=3,
+                #  X=8,
+                #  R=4,
+                ########
+                #  N=512,
+                #  L=16,
+                #  B=128,
+                #  H=512,
+                #  P=3,
+                #  X=8, 
+                #  R=3,
                  audio_channels=2,
                  norm_type="gLN",
                  causal=False,
                  mask_nonlinear='relu',
                  sample_rate=44100,
                  segment_length=44100 * 2 * 4,
-                 skip=True,
+                 skip=False,
                  *args,
                  **kwargs,
                  ):
@@ -512,10 +544,10 @@ if __name__ == "__main__":
         "denoiser.demucs",
         description="Benchmark the streaming Demucs implementation, "
                     "as well as checking the delta with the offline implementation.")
-    parser.add_argument("--num_sources", default=1, type=int)
+    parser.add_argument("--num_sources", default=2, type=int)
     parser.add_argument("--sample_rate", default=16000, type=int)
     parser.add_argument("--segment", default=1, type=float)
-    parser.add_argument("--input_channels", default=1, type=int)
+    parser.add_argument("--audio_channels", default=2, type=int)
     parser.add_argument("--depth", default=12, type=int)
     parser.add_argument("--channels_interval", default=24, type=int)
     parser.add_argument("--skip", default=False, type=bool)    
@@ -523,14 +555,14 @@ if __name__ == "__main__":
         
     args = parser.parse_args()
     
-    model = get_model()([None]*args.num_sources, N, L, B, H, P, X, R, # C(input_channels)
-                        input_channels=args.input_channels,
+    model = get_model()([None]*args.num_sources, N, L, B, H, P, X, R, # C(audio_channels)
+                        audio_channels=args.audio_channels,
                         sample_rate=args.sample_rate,
                         norm_type=norm_type,
                         skip=args.skip).to(args.device)
 
     length = int(args.sample_rate*args.segment) 
-    x = torch.randn(args.input_channels, length).to(args.device)
+    x = torch.randn(args.audio_channels, length).to(args.device)
     print("Input: ", x[None].shape)
     out = model(x[None])
     print("Output: ", out.shape)

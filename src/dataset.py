@@ -184,6 +184,7 @@ class ClarityWavDataset(Dataset):
                  audio_channels=2,
                  train=True,
                  dev_clarity=False,
+                 type_dataset="se",
                  ):
         """
         Construct train dataset
@@ -223,7 +224,11 @@ class ClarityWavDataset(Dataset):
         assert os.path.exists(path_dataset), f"Path {path_dataset} is not existed..."
         
         source_list = ['hr', 'interferer', 'mix', 'target', 'target_anechoic']
-        scene_channel_list = ['CH0', 'CH1', 'CH2', 'CH3']
+        if type_dataset == "se":
+            scene_channel_list = ['CH0', 'CH1', 'CH2', 'CH3']
+        elif type_dataset == "deverb":
+            scene_channel_list = ['CH1', ]
+        # scene_channel_list = ['CH0', 'CH2', 'CH3']
         self.target_time = omegaconf.OmegaConf.load(os.path.join(path_dataset, "custom_metadata/scenes.train.time.json"))
 
         # get dataset
@@ -233,7 +238,8 @@ class ClarityWavDataset(Dataset):
             interferer_wav_files_find = []
             for scene in scenes:
                 for ch in scene_channel_list:
-                    clean_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[3]}_{ch}.wav'
+                    channel_clean = 3 if type_dataset == "se" else 4
+                    clean_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[channel_clean]}_{ch}.wav'
                     mixture_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[2]}_{ch}.wav'
                     interferer_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[1]}_{ch}.wav'
                 
@@ -265,7 +271,17 @@ class ClarityWavDataset(Dataset):
             interferer_wav_files = []
 
             for scene in scenes:
-                clean_wav_file = f'{path_dataset}/{mode}/scenes/{scene}_{source_list[3]}_CH1.wav'
+                # for ch in scene_channel_list:
+                #     clean_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[3]}_{ch}.wav'
+                #     mixture_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[2]}_{ch}.wav'
+                #     interferer_wav_file = f'{path_dataset}/train/scenes/{scene}_{source_list[1]}_{ch}.wav'
+
+                #     clean_wav_files.append(clean_wav_file)
+                #     mixture_wav_files.append(mixture_wav_file)
+                #     interferer_wav_files.append(interferer_wav_file)
+                
+                channel_clean = 3 if type_dataset == "se" else 4                    
+                clean_wav_file = f'{path_dataset}/{mode}/scenes/{scene}_{source_list[channel_clean]}_CH1.wav'
                 mixture_wav_file = f'{path_dataset}/{mode}/scenes/{scene}_{source_list[2]}_CH1.wav'
                 interferer_wav_file = f'{path_dataset}/{mode}/scenes/{scene}_{source_list[1]}_CH1.wav'
 
@@ -290,6 +306,7 @@ class ClarityWavDataset(Dataset):
         print(f"\t Final length: {self.length}")
         print(f"\t Norm:  {self.normalize}")
         print(f"\t Sample rate:  {self.sample_rate}")
+        print(f"\t Mode: {type_dataset}")
             
     def __len__(self):
         return self.length

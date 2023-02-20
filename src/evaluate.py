@@ -4,7 +4,8 @@ from .model.types import (MULTI_SPEECH_SEPERATION_MODELS,
                 MULTI_CHANNEL_SEPERATION_MODELS,
                 MONARCH_SPEECH_SEPARTAION_MODELS, 
                 STFT_MODELS,
-                WAV_MODELS,)
+                WAV_MODELS,
+                )
 
 def evaluate(mixture, model, device, config):
     """
@@ -12,16 +13,18 @@ def evaluate(mixture, model, device, config):
     """
     with torch.no_grad():
         input_batch = mixture
+        sample_length = input_batch.shape[-1]
         # mean, std
         if config.dset.norm == "z-score":
+            # [TODO] Check, this average means entire channel and spks
             mean_mixture = torch.mean(input_batch, dim=-1, keepdim=True)
             std_mixture = torch.std(input_batch, dim=-1, keepdim=True)
-            input_batch = (input_batch-mean_mixture) / (std_mixture + 1e-6)
+            input_batch = (input_batch-mean_mixture) / (std_mixture + 1e-9)
         
         if config.dset.norm == "linear-scale":
-            max_mixture = torch.max(input_batch, dim=-1, keepdim=True).values
-            min_mixture = torch.min(input_batch, dim=-1, keepdim=True).values
-            input_batch = (input_batch-min_mixture) / (max_mixture - min_mixture + 1e-6)
+            max_mixture = torch.max(input_batch, dim=-1, keepdim=True)
+            min_mixture = torch.min(input_batch, dim=-1, keepdim=True)
+            input_batch = (input_batch-min_mixture) / (max_mixture - min_mixture + 1e-9)
 
         # segment 
         stride = config.model.win_length
@@ -31,8 +34,9 @@ def evaluate(mixture, model, device, config):
         # merge segment, batch
         num_segment, nbatch, nchannel, nsample = input_batch.shape
         input_batch = input_batch.reshape(num_segment*nbatch, nchannel, nsample)
+
         if config.model.name in STFT_MODELS:
-            input_batch = stft_custom(input_batch, config)
+            input_batch = stft_custom(input_batch, config.model)
 
         # model
         if model:
@@ -59,15 +63,15 @@ def evaluate(mixture, model, device, config):
         
             del input_batch_segment, output_batch_segment
         else:
-            output = input_batch
+            output = input_batch               
 
         if config.model.name in MONARCH_SPEECH_SEPARTAION_MODELS:
             output = torch.unsqueeze(output, dim=1)
 
         if config.model.name in STFT_MODELS:
-            output = istft_custom(output, config)
+            output = istft_custom(output, sample_length, config.model)
         
-        if config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
+        if model and config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
             num_sources = len(config.model.sources)
             output = output.reshape(num_segment, nbatch, num_sources, nchannel, nsample)
             shape = list(mixture.shape)
@@ -86,10 +90,10 @@ def evaluate(mixture, model, device, config):
         enhanced = enhanced[..., :mixture.shape[-1]]        
         
         if config.dset.norm == "z-score":
-            enhanced = enhanced*(std_mixture+1e-6) + mean_mixture
+            enhanced = enhanced*(std_mixture+1e-9) + mean_mixture
             
         if config.dset.norm == "linear-scale":
-            enhanced = enhanced*(max_mixture-min_mixture+1e-6) + min_mixture
+            enhanced = enhanced*(max_mixture-min_mixture+1e-9) + min_mixture
 
     return enhanced
 
@@ -103,17 +107,17 @@ def stft_custom(tensor: torch.Tensor, config):
     tensor = tensor.contiguous()
     tensor_stft = tensor.view(-1, nsample)
     tensor_stft = torch.stft(input=tensor_stft,
-                    n_fft=config.model.n_fft,
-                    hop_length=config.model.hop_length,
-                    win_length=config.model.win_length,
-                    window=torch.hann_window(window_length=config.model.win_length, dtype=tensor.dtype, device=tensor.device),
-                    center=config.model.center,
+                    n_fft=config.n_fft,
+                    hop_length=config.hop_length,
+                    win_length=config.win_length,
+                    window=torch.hann_window(window_length=config.win_length, dtype=tensor.dtype, device=tensor.device),
+                    center=config.center,
                     pad_mode="reflect",
                     normalized=False, # *frame_length**(-0.5)
                     onesided=None,
                     return_complex=False,
                     )
-    tensor_stft /= config.model.win_length
+    tensor_stft /= config.win_length
     _, nfeature, nframe, ndtype = tensor_stft.size()
 
     if len(tensor.size()) == 3:
@@ -123,8 +127,8 @@ def stft_custom(tensor: torch.Tensor, config):
 
     return tensor_stft
 
-def istft_custom(tensor: torch.Tensor, config):
-    tensor_istft = tensor*config.model.win_length
+def istft_custom(tensor: torch.Tensor, length, config):
+    tensor_istft = tensor*config.win_length
 
     if len(tensor.size()) == 5:
         nbatch, nchannel, nfeature, nframe, ndtype = tensor_istft.size()
@@ -134,15 +138,15 @@ def istft_custom(tensor: torch.Tensor, config):
     tensor_istft = tensor_istft.contiguous()
     tensor_istft = tensor_istft.view(-1, nfeature, nframe, ndtype)        
     tensor_istft_complex = torch.complex(real=tensor_istft[..., 0], imag=tensor_istft[..., 1])
-    
+
     tensor_istft = torch.istft(
         input=tensor_istft_complex,
-        n_fft=config.model.n_fft,
-        hop_length=config.model.hop_length,
-        win_length=config.model.win_length,
-        window=torch.hann_window(window_length=config.model.win_length, dtype=tensor.dtype, device=tensor.device),
-        center=config.model.center,
-        length=int(config.model.segment*config.model.sample_rate),
+        n_fft=config.n_fft,
+        hop_length=config.hop_length,
+        win_length=config.win_length,
+        window=torch.hann_window(window_length=config.win_length, dtype=tensor.dtype, device=tensor.device),
+        center=config.center,
+        length=length,
         normalized=False,
         onesided=None,
         return_complex=False,

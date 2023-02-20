@@ -20,8 +20,9 @@ from torch.nn.functional import pad
 
 import typing as tp
 from .dataset import WavDataset, ClarityWavDataset
-from .utils import find_folder, obj2dict, split_list
-from .loss import loss_sisdr
+from .utils import find_folder, obj2dict, split_list, pad_last
+from .loss import loss_sisdr, loss_phase_sensitive_spectral_approximation
+
 
 from .model.conv_tasnet import ConvTasNet
 from .model.crn import CRN
@@ -32,6 +33,7 @@ from .model.wav_unet import WavUnet
 from .model.mel_rnn import MelRNN
 from .model.dnn import DeepNeuralNetwork
 from .model.unet import UNet
+from .model.stft_rnn import RNNBaseSTFTMask
 
 def collate_fn_pad(config, drop_last=True):
     def _collate_fn_pad(batch):
@@ -52,19 +54,18 @@ def collate_fn_pad(config, drop_last=True):
             
             segment_length = int(config.segment * config.sample_rate)
 
-            if drop_last and mixture.size()[-1] % segment_length != 0 and mixture.size()[-1] > segment_length:
+
+            if mixture.size()[-1] < segment_length:
+                mixture = pad_last(mixture, int(segment_length-mixture.shape[-1]))
+                sources = pad_last(sources, int(segment_length-sources.shape[-1]))               
+            
+            if drop_last and mixture.size()[-1] % segment_length != 0:
                 mixture = mixture[...,:segment_length*int(mixture.size()[-1]//segment_length)]
                 sources = sources[...,:segment_length*int(mixture.size()[-1]//segment_length)]
             
-            elif not drop_last and mixture.size()[-1] % segment_length != 0 and mixture.size()[-1] > segment_length:
-                npad = int(mixture.size()[-1]//segment_length+1)*segment_length - mixture.size()[-1]
-                mixture = pad(mixture, pad=(0, npad), mode="constant", value=0)
-                sources = pad(sources, pad=(0, npad), mode="constant", value=0)
-            
-            elif mixture.size()[-1] < segment_length:
-                npad = mixture.size()[-1] - segment_length
-                mixture = pad(mixture, pad=(0, npad), mode="constant", value=0)
-                sources = pad(sources, pad=(0, npad), mode="constant", value=0)
+            elif not drop_last and mixture.size()[-1] % segment_length != 0:
+                mixture = pad_last(mixture, int(mixture.size()[-1]//segment_length+1)*segment_length - mixture.size()[-1])
+                sources = pad_last(sources, int(sources.size()[-1]//segment_length+1)*segment_length - sources.size()[-1])
             
             num_channel, length = mixture.size()
             nsegment = int(length // segment_length)
@@ -157,7 +158,8 @@ def get_train_wav_clarity(config):
                                     normalize=config.norm,
                                     sample_rate=config.sample_rate,
                                     audio_channels=config.audio_channels,                                
-                                    train=True)     
+                                    train=True,
+                                    type_dataset=config.mode)     
     
     ratio_train = config.split[0]
     n_train = int(len(train_dataset) * ratio_train)
@@ -173,7 +175,8 @@ def get_train_wav_clarity(config):
                                         normalize=config.norm,
                                         sample_rate=config.sample_rate,
                                         audio_channels=config.audio_channels,
-                                        train=False) 
+                                        train=False,
+                                        type_dataset=config.mode) 
 
     print(f"Train {len(train_dataset)}, Validation {len(validation_dataset)}, Test {len(test_dataset)}")
 
@@ -192,7 +195,8 @@ def get_dev_wav_clarity(config):
                                     sample_rate=config.sample_rate,
                                     audio_channels=config.audio_channels,
                                     train=False,
-                                    dev_clarity=True)     
+                                    dev_clarity=True,
+                                    type_dataset=config.mode)     
     return dev_dataset
 
 def get_train_wav_dataset(config):
@@ -204,7 +208,6 @@ def get_train_wav_dataset(config):
         raise ValueError(f"{config.name} dataset is not implemented")
 
     return train_dataset, validation_dataset, test_dataset
-
 
 def get_dataloader(datasets: tp.List[Dataset], config, train=True) -> tp.List[DataLoader]:
     dataloaders = []
@@ -220,7 +223,6 @@ def get_dataloader(datasets: tp.List[Dataset], config, train=True) -> tp.List[Da
                                 ))
     return dataloaders
 
-
 def get_model(config):
     klass = {
             'dnn': DeepNeuralNetwork,
@@ -232,6 +234,7 @@ def get_model(config):
             'wav-unet': WavUnet,
             'conv-tasnet': ConvTasNet,
             'crn': CRN,
+            "rnn-stft-mask": RNNBaseSTFTMask,
     }[config.name]
 
     kwargs = obj2dict(config)
@@ -264,10 +267,11 @@ def get_loss_function(config):
         loss_function = torch.nn.functional.mse_loss
     elif config.loss == "si-sdr":
         loss_function = loss_sisdr
-    # elif config.loss == 'psa':
-    #     from loss import phase_sensitive_approximate_loss
-    #     loss_function = phase_sensitive_approximate_loss
+    elif config.loss == 'psa':
+        loss_function = loss_phase_sensitive_spectral_approximation
     else:
         raise ValueError(f"Loss function {config.loss} cannot use...")
 
     return loss_function
+
+import torch.nn.functional

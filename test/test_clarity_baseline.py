@@ -1,79 +1,54 @@
 import torch
 import unittest
-from mllib.src.train import (
-    main
-)
-from recipes.icassp_2023.MLbaseline.evaluate import run_calculate_si
-from recipes.icassp_2023.MLbaseline.enhance import enhance
+from src.train import main
 
 class ClaritySanityCheck(unittest.TestCase):
-    def test_dataset(self):
-        print()
+    def test_amplify_torch(self):
         """
-        python -m unittest -v mllib.test.test_clarity_baseline.ClaritySanityCheck.test_dataset
-        """
-        from mllib.src.distrib import get_train_wav_dataset
-        from mllib.src.utils import load_yaml
-        path_config = "./mllib/test/conf/config.yaml"
-        config = load_yaml(path_config)
-        train_dataset, validation_dataset, test_dataset = get_train_wav_dataset(config.dset, config.default.dset.name)
-
-        for batch_train in train_dataset:
-            mixture, clean, mixture_metadata, clean_metadata, name = batch_train
-            print(mixture.shape, clean.shape, name)
-            break
-
-        for batch_valid in validation_dataset:
-            mixture, clean, mixture_metadata, clean_metadata, name = batch_valid
-            break
-
-        for batch_test in test_dataset:
-            mixture, clean, origial_length, name = batch_test
-            print(mixture.shape, clean.shape, name)
-            break
-
-    def test_inference(self):
-        """
-        python -m unittest -v mllib.test.test_clarity_baseline.ClaritySanityCheck.test_inference
+        python -m unittest -v test.test_clarity_baseline.ClaritySanityCheck.test_amplify_torch
         """
         print()
-        from mllib.src.evaluate import evaluate
-        from mllib.src.distrib import get_train_wav_dataset
-        from mllib.src.utils import load_yaml
-        path_config = "./mllib/test/conf/config.yaml"
-        config = load_yaml(path_config)
-        train_dataset, validation_dataset, test_dataset = get_train_wav_dataset(config.dset, config.default.dset.name)
+        import json
+        import librosa
+        import numpy as np
+        import soundfile as sf
+        from pathlib import Path
+        from omegaconf import OmegaConf
+        from scipy.io import wavfile
+        from src.utils import load_yaml, obj2dict
+        from src.ha.compressor import CompressorTorch
+        from src.ha.amplifier import NALRTorch
+        from src.audio import amplify_torch
+        
+        # Should put root path for dataset
+        path_config = "./test/conf/config.yaml"
+        config = load_yaml(path_config)        
+        cfg = OmegaConf.load(config.ha)
 
-        for batch_valid in test_dataset:
-            mixture, clean, origial_length, name = batch_valid
-            print("Input: ", mixture.shape)
-            mixture = torch.unsqueeze(mixture, dim=0)
-            batch, nchannel, nsample = mixture.shape
-            mixture = torch.reshape(mixture, shape=(batch*nchannel, 1, nsample))
-            enhanced = evaluate(mixture=mixture, model=None, device=torch.device('cpu'), config=config)
-            
-            assert enhanced.shape ==  mixture.shape
-            assert (enhanced-mixture).max() < 1e-6
-            
-            break
+        with open(cfg.path.listeners_file, "r", encoding="utf-8") as fp:
+            listener_audiograms = json.load(fp)
+        
+        scenes_folder = Path(cfg.path.scenes_folder)
+        
+        audiogram = list(listener_audiograms.values())[0]
 
-    def test_train(self):
-        """
-        python -m unittest -v mllib.test.test_clarity_baseline.ClaritySanityCheck.test_train
-        """
-        print()        
-        main("./mllib/test/conf/config.yaml")
+        # Read signals
+        fs_signal, signal = wavfile.read(
+            scenes_folder / f"S00001_target_CH1.wav"
+        )
 
-    def test_enhance(self):
-        """
-        python -m unittest -v mllib.test.test_clarity_baseline.ClaritySanityCheck.test_enhance
-        """
-        # enhance()
-        ...
+        signal = signal / 32768.0
 
-    def test_evaluate(self):
-        """
-        python -m unittest -v mllib.test.test_clarity_baseline.ClaritySanityCheck.test_evaluate
-        """
-        # run_calculate_si
-        ...
+        signal = signal[:4*fs_signal, ...]
+        batch = torch.from_numpy(signal.T)
+        batch = torch.stack([batch, batch], dim=0) # batch, nchannel, nsamples
+        batch = batch.unsqueeze(1) 
+        enhancer = NALRTorch(**obj2dict(config.nalr))
+        compressor = CompressorTorch(**obj2dict(config.compressor))
+        signal_amplfied = amplify_torch(signal=batch, 
+                                        enhancer=enhancer,
+                                        compressor=compressor,
+                                        audiogram=audiogram,
+                                        soft_clip=True)
+        
+        print(signal_amplfied.shape)

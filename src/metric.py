@@ -1,8 +1,66 @@
+import csv
 import numpy as np
 from pesq import pesq, cypesq
 from pypesq import pesq as nb_pesq
 from pystoi import stoi
 from museval.metrics import bss_eval
+
+class SpeechMetricResultsFile:
+    """Class to write results to a CSV file"""
+
+    def __init__(self, file_name):
+        self.file_name = file_name
+
+    def write_header(self):
+        with open(self.file_name, "w", encoding="utf-8") as csv_f:
+            csv_writer = csv.writer(
+                csv_f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+            )
+            csv_writer.writerow(["scene", 
+                                "sisdr_enhance",
+                                "sisdr_mixture", 
+                                "pesq_enhance", 
+                                "pesq_mixture",
+                                "stoi_enhance", 
+                                "stoi_mixture", 
+                                "haspi_enhance", 
+                                "haspi_mixture", 
+                                "hasqi_enhance", 
+                                "hasqi_mixture"])
+
+    def add_result(self, scene, 
+                         sisdr_enhance,
+                         pesq_enhance,
+                         stoi_enhance,
+                         sisdr_mixture,
+                         pesq_mixture,
+                         stoi_mixture,
+                         haspi_enhance=None,
+                         hasqi_enhance=None,
+                         haspi_mixture=None,
+                         hasqi_mixture=None,):
+        """Add a result to the CSV file"""
+
+        # print(f"\tThe score is sisdr {sisdr_enhance}, pesq {pesq_enhance}, stoi {stoi_enhance})")
+        # if haspi_enhance is not None:
+        #     print(f"\tThe score is haspi {haspi_enhance}, hasqi {hasqi_enhance}")
+
+        with open(self.file_name, "a", encoding="utf-8") as csv_f:
+            csv_writer = csv.writer(
+                csv_f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+            )
+            csv_writer.writerow([scene,
+                                 str(sisdr_enhance),
+                                 str(sisdr_mixture),
+                                 str(pesq_enhance),
+                                 str(pesq_mixture),
+                                 str(stoi_enhance),
+                                 str(stoi_mixture),
+                                 str(haspi_enhance) if haspi_enhance is not None else "",
+                                 str(haspi_mixture) if haspi_mixture is not None else "",
+                                 str(hasqi_enhance) if hasqi_enhance is not None else "",
+                                 str(hasqi_mixture) if hasqi_mixture is not None else "",
+                                 ])
 
 def SDR(reference, estimation, sr=16000):
     """Signal to Distortion Ratio (SDR) from museval

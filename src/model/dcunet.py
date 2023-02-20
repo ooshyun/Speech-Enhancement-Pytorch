@@ -51,7 +51,7 @@ class Decoder(nn.Module):
 
 
 class DCUnet(nn.Module):
-    def __init__(self, input_channels=1,
+    def __init__(self, audio_channels=1,
                  data_type=False,
                  model_complexity=45,
                  model_depth=20,
@@ -64,7 +64,7 @@ class DCUnet(nn.Module):
         if data_type:
             model_complexity = int(model_complexity // 1.414)
 
-        self.set_size(model_complexity=model_complexity, input_channels=input_channels, model_depth=model_depth)
+        self.set_size(model_complexity=model_complexity, audio_channels=audio_channels, model_depth=model_depth)
         
         self.amplitude = Amplitude()
         self.encoders = []
@@ -162,9 +162,9 @@ class DCUnet(nn.Module):
 
         return out
 
-    def set_size(self, model_complexity, model_depth=20, input_channels=1):
+    def set_size(self, model_complexity, model_depth=20, audio_channels=1):
         if model_depth == 10:
-            self.enc_channels = [input_channels,
+            self.enc_channels = [audio_channels,
                                  model_complexity,
                                  model_complexity * 2,
                                  model_complexity * 2,
@@ -213,7 +213,7 @@ class DCUnet(nn.Module):
                                  (2, 1)]
 
         elif model_depth == 20:
-            self.enc_channels = [input_channels,
+            self.enc_channels = [audio_channels,
                                  model_complexity,
                                  model_complexity,
                                  model_complexity * 2,
@@ -391,7 +391,8 @@ if __name__ == "__main__":
     else:
         print('No GPU available, training on CPU.')
         
-    device = torch.device('cuda' if train_on_gpu else 'cpu')
+    # device = torch.device('cuda' if train_on_gpu else 'cpu')
+    device = torch.device('cpu')
 
     import argparse
     parser = argparse.ArgumentParser(
@@ -400,7 +401,7 @@ if __name__ == "__main__":
                     "as well as checking the delta with the offline implementation.")
     parser.add_argument("--sample_rate", default=16000, type=int)
     parser.add_argument("--segment", default=1.024, type=float)
-    parser.add_argument("--input_channels", default=1, type=int)
+    parser.add_argument("--audio_channels", default=2, type=int)
     parser.add_argument("--n_fft", default=512, type=int)
     parser.add_argument("--hop_length", default=256, type=int)
     parser.add_argument("--model_depth", default=10, type=int) # 10, 20
@@ -411,7 +412,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     
-    model = get_model()(input_channels=args.input_channels, 
+    model = get_model()(audio_channels=args.audio_channels, 
                         model_depth=args.model_depth, 
                         data_type=args.data_type, 
                         model_complexity=args.model_complexity, 
@@ -420,13 +421,9 @@ if __name__ == "__main__":
     nframe = int(int(args.sample_rate*args.segment) // args.hop_length) + 1
     nfeature = int(args.n_fft//2)+1
 
-    x = torch.randn(1, nfeature, nframe, 2).to(args.device) # channel, F, T, real/imag
-    if args.input_channels == 1:
-        batch = x[None]
-    elif args.input_channels == 2:
-        batch = torch.concat([x[None], x[None]], dim=1)
-    print("In: ", batch.shape)
-    out = model(batch)
+    x = torch.randn(args.audio_channels, nfeature, nframe, 2).to(args.device) # channel, F, T, real/imag
+    print("In: ", x[None].shape)
+    out = model(x[None])
     print("Out: ", out.shape)
     model_size = sum(p.numel() for p in model.parameters()) * 4 / 2**20
     print(f"model size: {model_size:.1f}MB")
