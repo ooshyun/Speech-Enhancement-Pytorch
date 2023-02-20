@@ -1,6 +1,7 @@
 **
 !conf/
 !model/
+!ha/
 
 !*.py
 !.gitignore

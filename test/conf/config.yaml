@@ -1,6 +1,7 @@
 default:
-  config:
-  # config: './recipes/icassp_2023/MLbaseline/config_train.yaml'
+  name:  
+  
+ha: './src/ha/conf/config_train.yaml'
 
 seed: 10    
 
@@ -28,11 +29,11 @@ optim:
   pit: True
 
 model:
-  # wav-unet, dcunet, demucs, unet, mel-rnn, crn, dccrn, conv-tasnet
+  # wav-unet, dcunet, demucs, unet, mel-rnn, crn, dccrn, conv-tasnet, rnn-stft-mask
   name: 'conv-tasnet'
-  audio_channels: 1
+  audio_channels: 2
   num_spk: 2
-  segment: 1.024
+  segment: 4
   sample_rate: 16000
   n_fft: 512
   hop_length: 256
@@ -84,26 +85,35 @@ model:
   sources: [None, None]
   skip: False
 
-    
+  # RNN STFT Mask
+  rnn_type: 'lstm'
+  rnn_hidden: 256
+  rnn_layer: 1
+  activation: "relu"
+  drop_out: 0.5
+  bidirectional: False
+
 dset:
   # name: 'VoiceBankDEMAND'
   # wav: './data/VoiceBankDEMAND/DS_10283_2791'
   name: 'Clarity'
-  wav: './data/clarity_ICASSP2023/clarity_CEC2_data/clarity_data'
+  wav: '' # [TODo]
   split: [0.85, 0.1, 0.05]
-  segment: 1.024  
+  segment: 4  
   audio_channels: 1
-  use_all: False
+  use_all: True
   shift: None
   sample_rate: 16000
   norm: 'z-score'
   # norm: 'linear-scale'
-  
+  mode: 'se'
+
 solver:
+  mode: 'se'
   root: './test'
   num_workers: 10
   epochs: 1
-  batch_size: 16
+  batch_size: 2
   all_steps: False
   total_steps: 1
   save_checkpoint_interval: 1
@@ -112,6 +122,7 @@ solver:
   preloaded_model:
   cudnn_deterministic: True
   validation: 
+    total_steps: 1
     interval: 1
     metric: 'loss' # sisdr, stoi, pesq, sisdr
   test:

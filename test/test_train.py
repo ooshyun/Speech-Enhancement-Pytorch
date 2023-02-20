@@ -10,7 +10,29 @@ class TrainSanityCheck(unittest.TestCase):
         """
         python -m unittest -v test.test_train.TrainSanityCheck.test_train
         """
-        main("./test/conf/config.yaml")
+        main("./test/conf/config.yaml", device="cpu")
+
+    def test_train_deverb(self):
+        """
+        python -m unittest -v test.test_train.TrainSanityCheck.test_train_deverb
+        """
+        print()
+        solver = main("./test/conf/config.yaml", device="cpu", return_solver=True)
+        config = solver.config
+        print(f"Mode Dataset: {config.dset.mode}, Solver: {config.solver.mode}")
+
+        solver.train()
+
+
+        config.dset.mode = "deverb"
+        config.solver.mode = "deverb"
+        config.resume = solver.root_dir.as_posix()
+
+        del solver
+
+        print(f"Mode Dataset: {config.dset.mode}, Solver: {config.solver.mode}")
+        main(config, device="cpu")
+
 
     def test_stft(self):
         """

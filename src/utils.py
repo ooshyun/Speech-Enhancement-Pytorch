@@ -3,9 +3,16 @@ import yaml
 import json
 import glob
 import torch
+from torch.nn.functional import pad
 import numpy as np
 import typing as tp
+import warnings 
 from omegaconf import OmegaConf
+
+def pad_last(tensor, size:int):
+    padding = [0,]*2*len(tensor.shape)
+    padding[1] = size         
+    return pad(tensor, pad=padding, mode="constant", value=0.)
 
 def get_filtered_snr_file(config):
     snr_range = [0, 5]  
@@ -58,10 +65,13 @@ def sample_fixed_length_data_aligned(data_list: list, sample_length, start=None)
 
         time = [start, end]
     """
-    assert isinstance(data_list, list)
+    assert isinstance(data_list, list), f"data format should be list..."
     
-    assert data_list[0].shape[-1] >= sample_length, f"len(data_a) is {data_list[0].shape[-1]}, sample_length is {sample_length}."
-
+    if data_list[0].shape[-1] <= sample_length:
+        warnings.warn(f"data length <= segment sample length, len(data_a) is {data_list[0].shape[-1]}, sample_length is {sample_length}.")
+        for i in range(len(data_list)):
+            data_list[i] = pad_last(data_list[i], size=sample_length-data_list[i].shape[-1])
+            
     length_data = data_list[0].shape[-1]
     
     if start is None:
@@ -121,7 +131,11 @@ def find_folder(name: str, path: str):
     path_list = sorted(path_list)
     return path_list
 
-def load_yaml(path: str, *args, **kwargs) -> dict:
+# declaring a class
+class Config:
+    pass
+
+def load_yaml(path: str, *args, **kwargs) -> Config:
     with open(path, "r") as tmp:
         try:
             _dict = yaml.safe_load(tmp)
@@ -130,11 +144,6 @@ def load_yaml(path: str, *args, **kwargs) -> dict:
 
         except yaml.YAMLError as exc:
             print(exc)
-
-
-# declaring a class
-class Config:
-    pass
 
 
 def dict2obj(d):

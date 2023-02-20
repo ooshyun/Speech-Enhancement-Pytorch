@@ -2,9 +2,10 @@ import os
 import random
 import torch
 import numpy as np
-from .utils import load_yaml
+from .utils import load_yaml, Config
 from .distrib import (
     get_train_wav_dataset,
+    get_dev_wav_clarity,
     get_dataloader,
     get_loss_function,
     get_model,
@@ -14,8 +15,18 @@ from .distrib import (
 import warnings
 from .solver import Solver
 
-def main(path_config, return_solver=False, mode="train"):
-    config = load_yaml(path_config)
+def main(obj_config, 
+        return_solver=False, 
+        mode="train",
+        save=False, 
+        dev=False, 
+        device='gpu'):
+    
+    if isinstance(obj_config, str):
+        config = load_yaml(obj_config)
+    elif isinstance(obj_config, Config):
+        config = obj_config
+    
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
     random.seed(config.seed)
@@ -23,6 +34,10 @@ def main(path_config, return_solver=False, mode="train"):
     print("-"*30)
     print("\tSearch training datasets...")
     train_dataset, validation_dataset, test_dataset = get_train_wav_dataset(config.dset)
+    if dev and mode=="test":
+        print("-"*30)
+        print("\tLoading development datasets to test clarity...")
+        test_dataset = get_dev_wav_clarity(config.dset)
     
     print("-"*30)
     print("\tLoading data loader...")    
@@ -59,6 +74,7 @@ def main(path_config, return_solver=False, mode="train"):
         train_dataloader=train_dataloader,
         validation_dataloader=validation_dataloader,
         test_dataloader=test_dataloader,
+        device=device,
     )
 
     if return_solver:
@@ -73,7 +89,7 @@ def main(path_config, return_solver=False, mode="train"):
         elif mode=="validation":
             solver._run_one_epoch(1, 1, train=False)
         elif mode=="test":
-            solver.inference(1, 1)
+            solver.inference(1, 1, save=save)
         
         score = solver.score
         score_inference = solver.score_inference
