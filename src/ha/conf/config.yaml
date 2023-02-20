@@ -1,6 +1,6 @@
 path:
   # root: # [TODO] set clairty challenge dataset path
-  root: '/home/olive-samba/sambashare/data/Sound/clarity_ICASSP2023/clarity_CEC2_data'
+  root: ''
   metadata_dir: ${path.root}/clarity_data/metadata
   scenes_listeners_file: ${path.metadata_dir}/scenes_listeners.dev.json
   listeners_file: ${path.metadata_dir}/listeners.json
