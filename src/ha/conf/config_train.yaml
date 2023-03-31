@@ -1,6 +1,5 @@
 path:
-  # root: # [TODO] set clairty challenge dataset path
-  root: ''  
+  root: ''# [TODO] set clairty challenge dataset path
   metadata_dir: ${path.root}/clarity_data/metadata
   scenes_listeners_file:
   listeners_file: ${path.metadata_dir}/listeners.json
