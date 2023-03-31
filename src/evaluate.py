@@ -69,7 +69,7 @@ def evaluate(mixture, model, device, config):
             output = torch.unsqueeze(output, dim=1)
 
         if config.model.name in STFT_MODELS:
-            output = istft_custom(output, sample_length, config.model)
+            output = istft_custom(output, nsample, config.model)
         
         if model and config.model.name in MULTI_SPEECH_SEPERATION_MODELS:
             num_sources = len(config.model.sources)

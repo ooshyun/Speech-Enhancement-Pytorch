@@ -145,7 +145,6 @@ class Solver(object):
             self.model = torch.nn.DataParallel(self.model, device_ids=list(range(self.n_gpu)))
 
         # Trainer
-        self.mode = config.solver.mode
         self.epochs = config.solver.epochs
         self.save_checkpoint_interval = config.solver.save_checkpoint_interval
         self.validation_interval = config.solver.validation.interval
@@ -377,9 +376,9 @@ class Solver(object):
                 else:
                     early_stopping += 1
             
-            if epoch % self.test_interval == 0: # and epoch > 0:
-                print(f"[{int(time.time() - start_time)} seconds] Training and Validation are over, Test is in progress...")
-                score = self.inference(epoch, self.epochs)            
+            # if epoch % self.test_interval == 0: # and epoch > 0:
+            #     print(f"[{int(time.time() - start_time)} seconds] Training and Validation are over, Test is in progress...")
+            #     score = self.inference(epoch, self.epochs)            
 
             if early_stopping > patience:
                 break
@@ -455,8 +454,8 @@ class Solver(object):
             if self.config.model.name in STFT_MODELS:
                 # Reference. https://espnet.github.io/espnet/_modules/espnet2/layers/stft.html
                 # return shape: [batch, channel, nfeature, nframe, ndtype]
-                mixture = stft_custom(tensor=mixture, config=self.config)
-                sources = stft_custom(tensor=sources, config=self.config)
+                mixture = stft_custom(tensor=mixture, config=self.config.model)
+                sources = stft_custom(tensor=sources, config=self.config.model)
 
             # with torch.autograd.detect_anomaly(): # figuring out nan grads
             if train: 
@@ -556,7 +555,6 @@ class Solver(object):
             if self.file_name_list:                     
                 if name[0] not in self.file_name_list:
                     continue
-
             nbatch, nchannel, nsample = mixture.shape
             num_spk = sources.shape[1]
 
@@ -647,14 +645,18 @@ class Solver(object):
         if self.num_visualization > self.config.solver.test.num_show:
             return
 
+        # view cause error
+        # RuntimeError: view size is not compatible with input tensor's size and stride 
+        # (at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.
+        # This error cannot solve using .contingous() -> What is differnece between reshape, contingous, view?
         batch, nchannel, nsamples = mixture.size()
-        mixture_one_sequence = mixture.view(nchannel, batch, nsamples) 
-        enhanced_one_sequence = enhanced.view(nchannel, batch, nsamples) 
-        clean_one_sequence = clean.view(nchannel, batch, nsamples) 
+        mixture_one_sequence = mixture.reshape(nchannel, batch, nsamples) 
+        enhanced_one_sequence = enhanced.reshape(nchannel, batch, nsamples) 
+        clean_one_sequence = clean.reshape(nchannel, batch, nsamples) 
 
-        mixture_one_sequence = mixture_one_sequence.view(nchannel*batch*nsamples) 
-        enhanced_one_sequence = enhanced_one_sequence.view(nchannel*batch*nsamples) 
-        clean_one_sequence = clean_one_sequence.view(nchannel*batch*nsamples) 
+        mixture_one_sequence = mixture_one_sequence.reshape(nchannel*batch*nsamples) 
+        enhanced_one_sequence = enhanced_one_sequence.reshape(nchannel*batch*nsamples) 
+        clean_one_sequence = clean_one_sequence.reshape(nchannel*batch*nsamples) 
     
         # self.writer.add_audio(f"Speech/{name}_mixture", mixture_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
         # self.writer.add_audio(f"Speech/{name}_Enhanced", enhanced_one_sequence, epoch, sample_rate=self.config.dset.sample_rate)
